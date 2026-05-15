@@ -1,0 +1,22 @@
+{
+  "name": "canteen-hackathon",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "dev": "pnpm --filter @canteen/web dev",
+    "build": "pnpm --filter @canteen/web build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "contracts:build": "cd contracts && forge build",
+    "contracts:test": "cd contracts && forge test -vv",
+    "contracts:deploy:arc:simulate": "cd contracts && set -a && . ./.env && set +a && forge script script/Deploy.s.sol --rpc-url \"$ARC_RPC_URL\" -vvv",
+    "contracts:deploy:arc": "cd contracts && set -a && . ./.env && set +a && forge script script/Deploy.s.sol --rpc-url \"$ARC_RPC_URL\" --broadcast --slow -vvv"
+  },
+  "devDependencies": {
+    "typescript": "5.5.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

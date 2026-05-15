@@ -1,0 +1,16 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "pnpm --filter @canteen/web build",
+  "installCommand": "pnpm install --frozen-lockfile=false",
+  "outputDirectory": "apps/web/.next",
+  "framework": "nextjs",
+  "functions": {
+    "apps/web/app/api/insight/[eventId]/route.ts": {
+      "maxDuration": 60
+    },
+    "apps/web/app/api/markets/hot/route.ts": {
+      "maxDuration": 30
+    }
+  },
+  "regions": ["hkg1", "sin1", "icn1"]
+}

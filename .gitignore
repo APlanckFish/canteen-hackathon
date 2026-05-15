@@ -1,0 +1,36 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# build
+.next/
+out/
+dist/
+build/
+.turbo/
+
+# env  (matches at any depth: ./.env, apps/web/.env.local, contracts/.env, ...)
+**/.env
+**/.env.local
+**/.env.*.local
+**/.env.development
+**/.env.production
+
+# logs
+npm-debug.log*
+pnpm-debug.log*
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
+
+# foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/.gas-snapshot
+
+# vercel
+.vercel
+.codebuddy

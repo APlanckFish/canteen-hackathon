@@ -1,0 +1,120 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: #0b0e13;
+  color: #ffffff;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background-image:
+    radial-gradient(1100px circle at 50% -10%, rgba(45, 156, 219, 0.18), transparent 60%),
+    radial-gradient(800px circle at 90% 10%, rgba(39, 174, 96, 0.08), transparent 55%),
+    radial-gradient(800px circle at 5% 80%, rgba(235, 87, 87, 0.06), transparent 55%);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+@layer components {
+  .glass-card {
+    @apply rounded-2xl border border-border bg-background-card/70 backdrop-blur-md shadow-glass;
+  }
+  .glass-card-strong {
+    @apply rounded-2xl border border-border-strong bg-background-elevated/80 backdrop-blur-xl shadow-glass;
+  }
+  .neon-divider {
+    @apply h-px w-full bg-gradient-to-r from-transparent via-accent/40 to-transparent;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium leading-none;
+  }
+  .pill-yes {
+    @apply pill bg-yes-soft text-yes;
+  }
+  .pill-no {
+    @apply pill bg-no-soft text-no;
+  }
+  .pill-accent {
+    @apply pill bg-accent/15 text-accent;
+  }
+  .pill-muted {
+    @apply pill bg-white/5 text-foreground-muted;
+  }
+  .neon-button {
+    @apply relative inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold
+           text-white transition-all duration-200
+           bg-gradient-to-b from-accent to-accent/70
+           shadow-[0_0_24px_rgba(63,182,255,0.25)]
+           hover:shadow-[0_0_32px_rgba(63,182,255,0.55)] hover:from-accent-glow hover:to-accent
+           active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none;
+  }
+  .ghost-button {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-border-strong px-4 py-2.5
+           text-sm font-medium text-foreground-muted hover:text-white hover:border-white/30
+           transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .probability-bar {
+    @apply relative h-1.5 w-full overflow-hidden rounded-full bg-white/5;
+  }
+  .probability-bar-fill-yes {
+    @apply absolute inset-y-0 left-0 bg-gradient-to-r from-yes/80 to-yes-glow rounded-full;
+  }
+  .probability-bar-fill-no {
+    @apply absolute inset-y-0 left-0 bg-gradient-to-r from-no/80 to-no-glow rounded-full;
+  }
+  .grid-bg {
+    @apply bg-grid-faint [background-size:48px_48px];
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+}
+
+/* Streaming caret used by InsightReport */
+.caret::after {
+  content: "▍";
+  margin-left: 2px;
+  color: #3fb6ff;
+  animation: caret-blink 1s step-end infinite;
+}
+
+@keyframes caret-blink {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+
+/* Citation jump highlight — used by MarkdownView when a (N) link is clicked. */
+.evidence-flash {
+  animation: evidence-flash 1.5s ease-out;
+}
+@keyframes evidence-flash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(45, 156, 219, 0.0);
+    background-color: rgba(45, 156, 219, 0.18);
+  }
+  60% {
+    box-shadow: 0 0 0 4px rgba(45, 156, 219, 0.4);
+    background-color: rgba(45, 156, 219, 0.10);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(45, 156, 219, 0.0);
+    background-color: transparent;
+  }
+}

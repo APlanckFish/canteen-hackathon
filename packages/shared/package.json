@@ -1,0 +1,24 @@
+{
+  "name": "@canteen/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./abi": "./src/abi/index.ts",
+    "./chains": "./src/chains.ts",
+    "./x402": "./src/x402.ts",
+    "./insight": "./src/insight.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "viem": "^2.21.19",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "^5"
+  }
+}
