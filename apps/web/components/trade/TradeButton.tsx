@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useAccount, useChainId, useSwitchChain } from "wagmi";
-import { polygonMainnet } from "@/lib/chains";
-import { placeOrder, buildPolymarketDeepLink, type TradeSide } from "@/lib/polymarket/clob";
+import { useAccount } from "wagmi";
+import { ArrowRightLeft, ExternalLink } from "lucide-react";
+import { buildPolymarketDeepLink, type TradeSide } from "@/lib/polymarket/clob";
+import { TradeDialog } from "./TradeDialog";
 import type { MarketSummary, InsightVerdict } from "@canteen/shared/insight";
-import { ExternalLink, Loader2, ArrowRightLeft } from "lucide-react";
 import { cn, formatUsd } from "@/lib/utils";
 import { useT } from "@/lib/i18n/provider";
 
@@ -15,73 +15,88 @@ interface Props {
   className?: string;
 }
 
+/**
+ * Two buttons:
+ *   1. Primary — "Trade on this site" → opens TradeDialog → real CLOB order.
+ *   2. Secondary — "Open on Polymarket" → falls back to deep link, always works.
+ *
+ * Primary auto-falls back to opening the deep link if the market lacks a
+ * `clobTokenIds` slot (some Gamma markets aren't tradeable via CLOB yet).
+ */
 export function TradeButton({ market, verdict, className }: Props) {
   const { address } = useAccount();
-  const chainId = useChainId();
-  const { switchChainAsync } = useSwitchChain();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const { t } = useT();
+  const [dialogOpen, setDialogOpen] = useState(false);
 
-  const onPolygon = chainId === polygonMainnet.id;
-  const side: TradeSide = verdict?.suggestedSide === "NO" ? "NO" : "YES";
-  const size = Math.max(1, Math.round(verdict?.suggestedSizeUsd ?? 25));
+  const aiSide: TradeSide = verdict?.suggestedSide === "NO" ? "NO" : "YES";
+  const aiSize = Math.max(0.01, verdict?.suggestedSizeUsd ?? 1);
+  const tradeable = !!market.clobTokenIds?.yes && !!market.clobTokenIds?.no;
 
-  const onClick = async () => {
-    setError(null);
-    if (!address) {
-      setError(t("trade.connectFirst"));
+  const onPrimary = () => {
+    if (!address) return;
+    if (!tradeable) {
+      window.open(
+        buildPolymarketDeepLink(market, aiSide),
+        "_blank",
+        "noopener,noreferrer",
+      );
       return;
     }
-    setBusy(true);
-    try {
-      if (!onPolygon) {
-        await switchChainAsync({ chainId: polygonMainnet.id });
-      }
-      const result = await placeOrder({
-        market,
-        side,
-        sizeUsd: size,
-        signer: address,
-      });
-      if (result.ok && result.url) {
-        window.open(result.url, "_blank", "noopener,noreferrer");
-      } else if (result.error) {
-        setError(result.error);
-      }
-    } catch (e) {
-      // If switching chain failed, just open deep link directly so the demo flow
-      // never dead-ends.
-      const url = buildPolymarketDeepLink(market, side);
-      window.open(url, "_blank", "noopener,noreferrer");
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    setDialogOpen(true);
   };
 
   return (
     <div className={cn("flex flex-col gap-2", className)}>
+      {/* Primary CTA */}
       <button
         type="button"
-        onClick={onClick}
-        disabled={busy}
+        onClick={onPrimary}
+        disabled={!address}
         className={cn(
           "group inline-flex h-12 items-center justify-center gap-2 rounded-xl border px-6 text-sm font-semibold transition-all",
-          side === "YES"
+          aiSide === "YES"
             ? "border-yes/40 bg-yes-soft text-yes hover:bg-yes/20 hover:shadow-neon-yes"
             : "border-no/40 bg-no-soft text-no hover:bg-no/20 hover:shadow-neon-no",
-          busy && "cursor-progress opacity-70",
+          !address && "opacity-60 cursor-not-allowed",
         )}
       >
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRightLeft className="h-4 w-4" />}
-        <span>{t("trade.cta", { side, size: formatUsd(size) })}</span>
-        <ExternalLink className="h-3.5 w-3.5 opacity-70 group-hover:opacity-100" />
+        <ArrowRightLeft className="h-4 w-4" />
+        <span>
+          {address
+            ? t("trade.cta", { side: aiSide, size: formatUsd(aiSize) })
+            : t("trade.connectFirst")}
+        </span>
       </button>
-      <div className="text-xs text-foreground-muted">
-        {onPolygon ? t("trade.ready") : t("trade.willSwitch")}
-      </div>
-      {error ? <div className="text-xs text-no">{error}</div> : null}
+
+      {/* Secondary: open on polymarket.com */}
+      <a
+        href={buildPolymarketDeepLink(market, aiSide)}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center justify-center gap-1.5 text-xs text-foreground-muted hover:text-white transition-colors"
+      >
+        {t("trade.openOnPolymarket")}
+        <ExternalLink className="h-3 w-3" />
+      </a>
+
+      {!tradeable ? (
+        <div className="text-[11px] text-foreground-dim text-center">
+          {t("trade.notTradeable")}
+        </div>
+      ) : (
+        <div className="text-[11px] text-foreground-dim text-center">
+          {t("trade.signedHkgRelay")}
+        </div>
+      )}
+
+      {dialogOpen ? (
+        <TradeDialog
+          open={dialogOpen}
+          onClose={() => setDialogOpen(false)}
+          market={market}
+          verdict={verdict}
+        />
+      ) : null}
     </div>
   );
 }

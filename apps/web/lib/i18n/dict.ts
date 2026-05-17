@@ -156,6 +156,19 @@ export const en = {
   "trade.cta": "Trade {side} {size} on Polymarket",
   "trade.ready": "Connected to Polygon · ready to sign",
   "trade.willSwitch": "Will switch wallet to Polygon Mainnet",
+  "trade.openOnPolymarket": "Open on Polymarket",
+  "trade.notTradeable":
+    "Live CLOB unavailable for this market — secondary link will open polymarket.com.",
+  "trade.signedHkgRelay":
+    "Order is signed in your wallet, relayed via HKG → Polymarket CLOB.",
+
+  // ---- about (faucet help) ----
+  "about.faucet.title": "Need test USDC on Arc?",
+  "about.faucet.desc":
+    "Grab free USDC from Circle's official testnet faucet — pick \"Arc Sepolia\" and paste your wallet address.",
+  "about.faucet.cta": "Open Circle Faucet",
+  "about.faucet.note":
+    "Up to 10 USDC per request. You also need a tiny bit of native gas — request that on the same page.",
 
   // ---- demo mode badge ----
   "demo.badge": "DEMO MODE",
@@ -315,6 +328,19 @@ export const zh: Record<DictKey, string> = {
   "trade.cta": "在 Polymarket 下 {side} {size}",
   "trade.ready": "已连接 Polygon · 可签名下单",
   "trade.willSwitch": "将切换钱包到 Polygon 主网",
+  "trade.openOnPolymarket": "在 Polymarket 打开",
+  "trade.notTradeable":
+    "此市场暂不支持站内 CLOB 下单，下方按钮会跳转到 polymarket.com。",
+  "trade.signedHkgRelay":
+    "订单在你的钱包内签名，通过香港节点中继到 Polymarket CLOB。",
+
+  // about (faucet help)
+  "about.faucet.title": "需要 Arc 测试网 USDC？",
+  "about.faucet.desc":
+    "通过 Circle 官方测试网水龙头免费领取 USDC——选择 \"Arc Sepolia\" 并粘贴你的钱包地址即可。",
+  "about.faucet.cta": "打开 Circle 水龙头",
+  "about.faucet.note":
+    "每次最多 10 USDC，同一页面还能领取一点原生 gas。",
 
   // demo badge
   "demo.badge": "演示模式",

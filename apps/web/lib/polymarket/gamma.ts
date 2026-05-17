@@ -26,6 +26,13 @@ interface GammaMarketRaw {
   outcomePrices?: string;     // JSON-encoded array
   active?: boolean;
   closed?: boolean;
+  /** JSON-encoded array of two CLOB ERC1155 token ids: [yesId, noId]. */
+  clobTokenIds?: string;
+  /** Decimal string e.g. "0.01" */
+  orderPriceMinTickSize?: number | string;
+  /** Decimal string e.g. "5" (USDC) */
+  orderMinSize?: number | string;
+  negRisk?: boolean;
 }
 
 export async function fetchHotMarkets(limit = 24): Promise<MarketSummary[]> {
@@ -80,6 +87,7 @@ function normalizeMarket(raw: GammaMarketRaw): MarketSummary | null {
   if (!raw?.id) return null;
   const yesProb = parseYesPrice(raw.outcomes, raw.outcomePrices);
   const question = String(raw.question ?? raw.slug ?? "Untitled market");
+  const clobTokenIds = parseClobTokenIds(raw.outcomes, raw.clobTokenIds);
   return {
     id: String(raw.id),
     slug: String(raw.slug ?? raw.id),
@@ -93,7 +101,40 @@ function normalizeMarket(raw: GammaMarketRaw): MarketSummary | null {
     // Gamma's /markets endpoint does NOT return `category`; infer it from
     // the question text so client-side filters (Politics / Crypto / etc.) work.
     category: raw.category ?? inferCategory(question, raw.description),
+    clobTokenIds,
+    tickSize: parseNum(raw.orderPriceMinTickSize, 0.01),
+    minOrderSize: parseNum(raw.orderMinSize, 5),
+    negRisk: raw.negRisk === true,
   };
+}
+
+/**
+ * Parse Gamma's `clobTokenIds` (JSON-encoded array of two huge decimal strings)
+ * into a YES/NO map, using `outcomes` to determine which slot is YES.
+ */
+function parseClobTokenIds(
+  outcomes?: string,
+  clobTokenIds?: string,
+): { yes: string; no: string } | undefined {
+  if (!clobTokenIds) return undefined;
+  try {
+    const ids = JSON.parse(clobTokenIds) as string[];
+    if (!Array.isArray(ids) || ids.length < 2) return undefined;
+    const oc = outcomes ? (JSON.parse(outcomes) as string[]) : ["Yes", "No"];
+    const yesIdx = oc.findIndex((o) => /yes/i.test(o));
+    const yes = ids[yesIdx >= 0 ? yesIdx : 0];
+    const no = ids[yesIdx >= 0 ? 1 - yesIdx : 1];
+    if (!yes || !no) return undefined;
+    return { yes: String(yes), no: String(no) };
+  } catch {
+    return undefined;
+  }
+}
+
+function parseNum(v: unknown, dflt: number): number {
+  if (v === undefined || v === null || v === "") return dflt;
+  const n = typeof v === "number" ? v : parseFloat(String(v));
+  return Number.isFinite(n) ? n : dflt;
 }
 
 /**

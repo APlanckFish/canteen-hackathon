@@ -3,7 +3,7 @@
 import { SiteHeader } from "@/components/common/SiteHeader";
 import { SiteFooter } from "@/components/common/SiteFooter";
 import Link from "next/link";
-import { Wallet, Zap, Sparkles, ArrowRightLeft } from "lucide-react";
+import { Wallet, Zap, Sparkles, ArrowRightLeft, Droplets, ExternalLink } from "lucide-react";
 import { useT } from "@/lib/i18n/provider";
 import { publicEnv } from "@/lib/env";
 import type { DictKey } from "@/lib/i18n/dict";
@@ -91,6 +91,37 @@ export default function AboutPage() {
                 {s}
               </span>
             ))}
+          </div>
+        </div>
+
+        {/* Circle Testnet faucet — helps demo evaluators get Arc USDC. */}
+        <div className="mt-6 glass-card p-6 space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-accent to-yes shadow-neon">
+              <Droplets className="h-4 w-4" />
+            </div>
+            <div className="flex-1 space-y-1">
+              <div className="text-base font-semibold">
+                {t("about.faucet.title")}
+              </div>
+              <p className="text-sm text-foreground-muted">
+                {t("about.faucet.desc")}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <a
+              href="https://faucet.circle.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-accent/40 bg-accent/10 px-4 py-2 text-sm font-semibold text-accent hover:bg-accent/20 transition-colors"
+            >
+              {t("about.faucet.cta")}
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+            <span className="text-xs text-foreground-dim">
+              {t("about.faucet.note")}
+            </span>
           </div>
         </div>
 

@@ -105,4 +105,16 @@ export interface MarketSummary {
   /** AI-assigned hotness 0..100, only present for AI-picked markets. */
   hotness?: number;
   aiTag?: string;
+  /**
+   * Polymarket CLOB token ids — one per outcome (YES/NO).
+   * Required for placing real orders on Polymarket.
+   * Returned by Gamma `/markets` as a JSON-encoded string array.
+   */
+  clobTokenIds?: { yes: string; no: string };
+  /** Smallest price increment, e.g. 0.01 = 1¢. Polymarket default 0.01. */
+  tickSize?: number;
+  /** Smallest order size in USDC. Polymarket default ~5 USDC for taker, 1 USDC for maker. */
+  minOrderSize?: number;
+  /** Whether market uses NegRisk (multi-outcome) — affects Exchange contract addr. */
+  negRisk?: boolean;
 }
