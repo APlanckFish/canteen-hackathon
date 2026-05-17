@@ -34,3 +34,4 @@ contracts/.gas-snapshot
 # vercel
 .vercel
 .codebuddy
+.env*.local

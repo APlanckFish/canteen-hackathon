@@ -154,11 +154,11 @@ foreach ($raw in $lines) {
         Invoke-VercelQuiet 'env' 'rm' $key $t '--yes' | Out-Null
 
         # `vercel env add` reads the value from stdin.
-        # Pipe via PowerShell. Use Write-Output -NoEnumerate; trailing newline
-        # is fine — the CLI strips it.
-        $val | & $VercelExe @VercelArgsPrefix env add $key $t *> $null
+        # Capture stderr so silent failures surface (e.g. preview slot rejects).
+        $errOut = $val | & $VercelExe @VercelArgsPrefix env add $key $t 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0) {
-            Warn "failed to set $key for $t"
+            $firstLine = ($errOut -split "`n" | Select-Object -First 1).Trim()
+            Warn ("env add failed for {0}/{1}: {2}" -f $key, $t, $firstLine)
         }
     }
     Write-Host ("  + set   {0,-45} -> [{1}]" -f $key, ($Targets -join ' ')) -ForegroundColor Green
@@ -167,17 +167,26 @@ foreach ($raw in $lines) {
 
 Ok "env sync done: $Pushed pushed, $Skipped skipped (empty)"
 
+# Verify env presence per target — catches silent failures.
+Say "verifying env coverage on Vercel ..."
+$envLs = & $VercelExe @VercelArgsPrefix env ls 2>$null | Out-String
+foreach ($t in $Targets) {
+    $cap = $t.Substring(0,1).ToUpper() + $t.Substring(1)
+    $count = ([regex]::Matches($envLs, "\s+$cap\s+\d")).Count
+    Write-Host ("  - {0,-12} : {1} vars" -f $cap, $count) -ForegroundColor DarkGray
+}
+
 if ($EnvOnly) {
     Ok "-EnvOnly: skipping deploy. Done."
     exit 0
 }
 
 # ---- deploy -----------------------------------------------------------------
-Say "building & deploying ..."
 if ($Prod) {
-    Warn "deploying to PRODUCTION"
+    Warn "deploying to PRODUCTION (will use Production env vars)"
     Invoke-Vercel 'deploy' '--prod' '--yes'
 } else {
+    Say "building & deploying to PREVIEW (will use Preview env vars)"
     Invoke-Vercel 'deploy' '--yes'
 }
 

@@ -62,8 +62,10 @@ say "syncing env vars from $ENV_FILE → Vercel ..."
 TARGETS=(production preview development)
 
 # Read line by line; skip comments / blank.
+# IMPORTANT: redirect stdin via FD 3, otherwise vercel CLI inside the loop
+# will consume the rest of .env.local and we silently process only line 1.
 pushed=0; skipped=0
-while IFS= read -r line || [[ -n "$line" ]]; do
+while IFS= read -r line <&3 || [[ -n "$line" ]]; do
   # strip CR + leading/trailing whitespace
   line="${line%$'\r'}"
   [[ -z "${line// }" ]] && continue
@@ -88,14 +90,33 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   for t in "${TARGETS[@]}"; do
     # remove first (ignore "not found" errors), then add fresh
     vercel env rm  "$key" "$t" --yes >/dev/null 2>&1 || true
-    printf "%s" "$val" | vercel env add "$key" "$t" >/dev/null 2>&1 \
-      || { warn "failed to set $key for $t"; continue; }
+    # IMPORTANT: use --value (not stdin). For Preview, the CLI also requires
+    # an explicit git-branch positional arg or it falls back to an
+    # interactive prompt that never returns under stdin piping. Empty branch
+    # = "all preview branches".
+    if [[ "$t" == "preview" ]]; then
+      add_out=$(vercel env add "$key" "$t" "" --value "$val" --force 2>&1) \
+        || warn "env add failed for $key/$t: $(echo "$add_out" | tail -1)"
+    else
+      add_out=$(vercel env add "$key" "$t" --value "$val" --force 2>&1) \
+        || warn "env add failed for $key/$t: $(echo "$add_out" | tail -1)"
+    fi
   done
   printf "  %s+ set%s  %-45s → [%s]\n" "$c_grn" "$c_reset" "$key" "${TARGETS[*]}"
   ((pushed++)) || true
-done < "$ENV_FILE"
+done 3< "$ENV_FILE"
 
 ok "env sync done: $pushed pushed, $skipped skipped (empty)"
+
+# Verify env presence per target — catches silent failures.
+say "verifying env coverage on Vercel ..."
+ENV_LS=$(vercel env ls 2>/dev/null || echo "")
+for t in "${TARGETS[@]}"; do
+  # Vercel CLI capitalizes the target column (Production / Preview / Development).
+  cap=$(echo "$t" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
+  count=$(echo "$ENV_LS" | grep -c -E "[[:space:]]+${cap}[[:space:]]+[0-9]" || true)
+  printf "  %s· %-12s%s : %d vars\n" "$c_dim" "$cap" "$c_reset" "$count"
+done
 
 if (( ENV_ONLY )); then
   ok "--env-only: skipping deploy. Done."
@@ -103,11 +124,11 @@ if (( ENV_ONLY )); then
 fi
 
 # ── deploy ────────────────────────────────────────────────────────────────────
-say "building & deploying ..."
 if (( PROD )); then
-  warn "deploying to PRODUCTION"
+  warn "deploying to PRODUCTION (will use Production env vars)"
   vercel deploy --prod --yes
 else
+  say "building & deploying to PREVIEW (will use Preview env vars)"
   vercel deploy --yes
 fi
 
