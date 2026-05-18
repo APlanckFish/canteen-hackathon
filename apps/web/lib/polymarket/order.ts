@@ -8,9 +8,12 @@
  *     through our own `/api/trade/place` proxy (Vercel HKG) to dodge
  *     Polymarket's geo-restricted CLOB API.
  *
- * Reference for the exact serialization Polymarket expects:
- *   https://github.com/Polymarket/clob-client/blob/main/src/utilities.ts
- *   https://github.com/Polymarket/exchange-orderbook
+ * Reference: tested against Polymarket clob-client `orderToJson` and
+ *   `buildOrder` (main branch). Two important format quirks:
+ *   - `salt` MUST fit in JS Number (parseInt(salt, 10)) — server uses Number,
+ *     not BigInt. We generate a 48-bit random int (max 2^48-1).
+ *   - `side` on the WIRE format is the literal "BUY"/"SELL", but in the EIP-712
+ *     hash it's a uint8 (0 or 1). We sign one shape, send another.
  */
 
 import type { WalletClient } from "viem";
@@ -27,13 +30,13 @@ import {
 export type TradeSide = "YES" | "NO";
 
 /**
- * Whole-number-of-decimals representation of an order, exactly as sent
- * to /order. All amounts in 6-decimals (USDC base units). Matches the
- * fields expected by Polymarket's REST endpoint.
+ * Wire format sent to Polymarket CLOB `/order` (matches `orderToJson` output
+ * in clob-client/utilities.ts). All numeric fields are decimal strings
+ * EXCEPT salt (number) and signatureType (number).
  */
 export interface SignedClobOrder {
-  /** Hex 0x...: keccak256(order) — server recomputes & verifies. */
-  salt: string;
+  /** Number — must fit in JS Number (server uses parseInt). 48-bit safe. */
+  salt: number;
   maker: `0x${string}`;
   signer: `0x${string}`;
   taker: `0x${string}`;
@@ -43,8 +46,10 @@ export interface SignedClobOrder {
   expiration: string;    // unix seconds; "0" = GTC
   nonce: string;
   feeRateBps: string;
-  side: string;          // "0" = BUY, "1" = SELL
-  signatureType: number; // 0 = EOA
+  /** "BUY" or "SELL" on the wire (NOT the uint8 used in EIP-712). */
+  side: "BUY" | "SELL";
+  /** 0 = EOA. */
+  signatureType: number;
   signature: `0x${string}`;
 }
 
@@ -90,12 +95,17 @@ export async function buildAndSignBuyOrder(
   const shareCount = sizeUsd / price; // raw shares (still float)
   const takerAmount = parseUnits(shareCount.toFixed(6), 6); // shares received
 
-  // Random salt + nonce → ensures unique order hash even for identical params.
-  const saltBig = randomU256();
+  // 48-bit random salt — fits inside JS Number safely (Number.MAX_SAFE_INTEGER
+  // is 2^53 - 1, so 2^48 leaves plenty of headroom).
+  // Nonce is allowed to be any uint256 (used purely on-chain for cancels).
+  const saltNum = randomU48();
   const nonceBig = randomU256();
 
-  const orderStruct = {
-    salt: saltBig,
+  // ── EIP-712 message: side / signatureType are uint8 (numbers).  ────────────
+  // The DOMAIN, TYPES, and salt-as-bigint are all required for the hash to
+  // match what the on-chain Exchange computes.
+  const eip712Message = {
+    salt: BigInt(saltNum),
     maker: owner,
     signer: owner,
     taker: "0x0000000000000000000000000000000000000000" as `0x${string}`,
@@ -105,36 +115,32 @@ export async function buildAndSignBuyOrder(
     expiration: ORDER_EXPIRATION_GTC,
     nonce: nonceBig,
     feeRateBps: ORDER_FEE_RATE_BPS,
-    // viem maps EIP-712 uint8 → TS number, not bigint.
-    side: OrderSide.BUY as number, // BUY for both YES and NO (we're acquiring shares)
-    signatureType: SignatureType.EOA as number,
+    side: OrderSide.BUY as number, // uint8 in TS -> 0
+    signatureType: SignatureType.EOA as number, // uint8 in TS -> 0
   };
 
   const domain = buildOrderDomain(negRisk);
-
-  // viem's wallet signTypedData uses the connected account (OKX / MetaMask)
-  // to sign the EIP-712 hash. This pops the wallet confirm dialog.
   const signature = await walletClient.signTypedData({
     account: owner,
     domain,
     types: ORDER_TYPES,
     primaryType: "Order",
-    message: orderStruct,
+    message: eip712Message,
   });
 
-  // Convert to wire format (decimal strings — Polymarket REST expects strings).
+  // ── Wire format: salt as Number, side as "BUY"/"SELL". ─────────────────────
   return {
-    salt: "0x" + saltBig.toString(16),
-    maker: orderStruct.maker,
-    signer: orderStruct.signer,
-    taker: orderStruct.taker,
-    tokenId: orderStruct.tokenId.toString(),
-    makerAmount: orderStruct.makerAmount.toString(),
-    takerAmount: orderStruct.takerAmount.toString(),
-    expiration: orderStruct.expiration.toString(),
-    nonce: orderStruct.nonce.toString(),
-    feeRateBps: orderStruct.feeRateBps.toString(),
-    side: orderStruct.side.toString(),
+    salt: saltNum,
+    maker: eip712Message.maker,
+    signer: eip712Message.signer,
+    taker: eip712Message.taker,
+    tokenId: eip712Message.tokenId.toString(),
+    makerAmount: eip712Message.makerAmount.toString(),
+    takerAmount: eip712Message.takerAmount.toString(),
+    expiration: eip712Message.expiration.toString(),
+    nonce: eip712Message.nonce.toString(),
+    feeRateBps: eip712Message.feeRateBps.toString(),
+    side: "BUY",
     signatureType: SignatureType.EOA,
     signature,
   };
@@ -142,16 +148,22 @@ export async function buildAndSignBuyOrder(
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
+/** Cryptographically random 48-bit unsigned int as JS Number. Safe for parseInt. */
+function randomU48(): number {
+  const bytes = new Uint8Array(6); // 6 * 8 = 48 bits
+  crypto.getRandomValues(bytes);
+  let n = 0;
+  for (const b of bytes) n = n * 256 + b;
+  return n;
+}
+
 /** Cryptographically random 256-bit unsigned int as bigint. */
 function randomU256(): bigint {
-  // 32 random bytes → bigint
   const bytes = new Uint8Array(32);
-  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
-    crypto.getRandomValues(bytes);
-  } else {
-    // Should never happen in browser; throw so we don't silently use weak rng.
+  if (typeof crypto === "undefined" || !crypto.getRandomValues) {
     throw new Error("crypto.getRandomValues unavailable");
   }
+  crypto.getRandomValues(bytes);
   let hex = "0x";
   for (const b of bytes) hex += b.toString(16).padStart(2, "0");
   return BigInt(hex);

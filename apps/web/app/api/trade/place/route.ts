@@ -29,8 +29,12 @@ interface Body {
     secret: string;
     passphrase: string;
   };
+  /**
+   * Wire-format order from buildAndSignBuyOrder. Match the SignedClobOrder
+   * type exactly — Polymarket validates strictly.
+   */
   order: {
-    salt: string;
+    salt: number;
     maker: string;
     signer: string;
     taker: string;
@@ -40,7 +44,7 @@ interface Body {
     expiration: string;
     nonce: string;
     feeRateBps: string;
-    side: string;
+    side: "BUY" | "SELL";
     signatureType: number;
     signature: string;
   };
@@ -81,8 +85,12 @@ export async function POST(req: Request) {
   const method = "POST";
   const timestamp = Math.floor(Date.now() / 1000).toString();
 
-  // Polymarket expects the order wrapped in this envelope.
+  // Polymarket expects the order wrapped in this envelope — must match
+  // the `orderToJson` output in clob-client/utilities.ts:
+  //   { deferExec, order, owner, orderType }
+  // Missing `deferExec` → server returns "Invalid order payload".
   const upstreamBody = JSON.stringify({
+    deferExec: false,
     order,
     owner,
     orderType,
