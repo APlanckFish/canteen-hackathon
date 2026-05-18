@@ -266,9 +266,32 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
     if (!creds) {
       setStage("authing");
       try {
-        // L1-only client just to derive creds.
-        const bootstrap = new ClobClient(proxyHost, POLYGON_CHAIN, signer);
+        // L1-only client just to derive creds. throwOnError=true so axios
+        // failures surface as proper exceptions (instead of returning a
+        // {error} object that gets silently treated as success).
+        const bootstrap = new ClobClient(
+          proxyHost,
+          POLYGON_CHAIN,
+          signer,
+          undefined, // creds (we're deriving them now)
+          undefined, // signatureType
+          undefined, // funderAddress
+          undefined, // geoBlockToken
+          undefined, // useServerTime
+          undefined, // builderConfig
+          undefined, // getSigner
+          undefined, // retryOnError
+          undefined, // tickSizeTtlMs
+          true, // throwOnError
+        );
         const derived = await bootstrap.createOrDeriveApiKey();
+        console.log("[deriveApiKey raw response]", derived);
+        if (derived?.error || !derived?.key) {
+          throw new Error(
+            derived?.error ||
+              `unexpected derive response: ${JSON.stringify(derived).slice(0, 400)}`,
+          );
+        }
         creds = {
           key: derived.key,
           secret: derived.secret,
@@ -282,12 +305,22 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
     }
 
     // ── full client w/ L2 creds ─────────────────────────────────────────────
+    // throwOnError: true makes SDK convert {error, status} responses into
+    // ApiError throws, so our catch blocks actually get the message.
     const client = new ClobClient(
       proxyHost,
       POLYGON_CHAIN,
       signer,
       { key: creds.key, secret: creds.secret, passphrase: creds.passphrase },
       SignatureType.EOA,
+      undefined, // funderAddress
+      undefined, // geoBlockToken
+      undefined, // useServerTime
+      undefined, // builderConfig
+      undefined, // getSigner
+      undefined, // retryOnError
+      undefined, // tickSizeTtlMs
+      true, // throwOnError ← important
     );
 
     // ── create + sign order (1 wallet popup) ────────────────────────────────
@@ -314,9 +347,29 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
     setStage("submitting");
     try {
       const resp = await client.postOrder(signedOrder, OrderType.GTC);
-      if (resp?.errorMsg) throw new Error(resp.errorMsg);
-      const id =
-        resp?.orderID || resp?.orderId || resp?.id || "(no id returned)";
+      // Print the full upstream response in dev tools so we can see what
+      // Polymarket actually said when something is off (no id, errorMsg,
+      // or "matched but no fills" etc.).
+      console.log("[postOrder raw response]", resp);
+
+      // SDK returns one of these shapes:
+      //   success: { success: true, orderID, status, ... }
+      //   error:   { error: "...", errorMsg?: "...", status: 4xx }   (when throwOnError=false)
+      // With throwOnError=true the error shape becomes a thrown ApiError.
+      if (resp?.error || resp?.errorMsg) {
+        throw new Error(resp.error || resp.errorMsg);
+      }
+      if (resp?.success === false) {
+        throw new Error(JSON.stringify(resp).slice(0, 500));
+      }
+      const id = resp?.orderID || resp?.orderId || resp?.id;
+      if (!id) {
+        // No id AND no error means the upstream returned an unexpected shape.
+        // Surface the raw payload so we can fix without another round-trip.
+        throw new Error(
+          `unexpected response shape: ${JSON.stringify(resp).slice(0, 400)}`,
+        );
+      }
       setOrderId(id);
       setStage("done");
     } catch (e) {

@@ -73,12 +73,24 @@ async function handle(
       redirect: "manual",
     });
   } catch (e) {
+    console.error(
+      `[clob-proxy] fetch failed ${req.method} ${upstreamUrl}: ${(e as Error).message}`,
+    );
     return new Response(
       JSON.stringify({
         ok: false,
         error: `clob-proxy upstream failed: ${(e as Error).message}`,
       }),
       { status: 502, headers: { "content-type": "application/json" } },
+    );
+  }
+
+  // ── log non-2xx upstream responses for debugging ──────────────────────────
+  // (Visible in `vercel logs` / Vercel dashboard → Functions tab.)
+  if (upstream.status >= 400) {
+    const text = await upstream.clone().text().catch(() => "");
+    console.warn(
+      `[clob-proxy] ${req.method} ${segs.join("/")} → ${upstream.status} :: ${text.slice(0, 400)}`,
     );
   }
 
