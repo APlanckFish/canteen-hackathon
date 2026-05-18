@@ -53,9 +53,9 @@ export async function POST(req: Request) {
   }
 
   // Polymarket's CLOB endpoint for create-or-derive.
-  // Both create-api-key & derive-api-key end up returning the same triple
-  // for a given (address, signature) pair — derive is idempotent.
-  const upstream = `${CLOB_HOST}/auth/derive-api-key`;
+  // Path is `/auth/api-key` — POST creates (or returns the existing) creds.
+  // The `/auth/derive-api-key` path returns 405 (does not exist).
+  const upstream = `${CLOB_HOST}/auth/api-key`;
 
   let res: Response;
   try {

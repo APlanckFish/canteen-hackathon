@@ -63,7 +63,18 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
   const config = useConfig();
   const { t } = useT();
 
-  const aiSide: TradeSide = verdict?.suggestedSide === "NO" ? "NO" : "YES";
+  // Default side picker:
+  //   1. AI gave a clear verdict (YES/NO) → respect it.
+  //   2. AI said SKIP or no verdict → fall back to the market's current
+  //      majority probability (e.g. yesProb=5% → default NO, yesProb=80% → YES).
+  // This way the dialog always opens to the side the user is most likely
+  // wanting to trade, removing one click for the common case.
+  const aiSide: TradeSide = useMemo(() => {
+    if (verdict?.suggestedSide === "YES") return "YES";
+    if (verdict?.suggestedSide === "NO") return "NO";
+    // SKIP or undefined → use market consensus
+    return (market.yesProb ?? 0.5) >= 0.5 ? "YES" : "NO";
+  }, [verdict?.suggestedSide, market.yesProb]);
   const aiSize = Math.max(MIN_USDC, verdict?.suggestedSizeUsd ?? 1);
 
   const [side, setSide] = useState<TradeSide>(aiSide);

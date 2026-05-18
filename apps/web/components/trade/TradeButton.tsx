@@ -28,7 +28,17 @@ export function TradeButton({ market, verdict, className }: Props) {
   const { t } = useT();
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  const aiSide: TradeSide = verdict?.suggestedSide === "NO" ? "NO" : "YES";
+  // Default side: AI verdict if explicit, else lean to market majority.
+  // Keep this logic identical to TradeDialog's so the button label matches
+  // what the dialog will pre-select.
+  const aiSide: TradeSide =
+    verdict?.suggestedSide === "YES"
+      ? "YES"
+      : verdict?.suggestedSide === "NO"
+        ? "NO"
+        : (market.yesProb ?? 0.5) >= 0.5
+          ? "YES"
+          : "NO";
   const aiSize = Math.max(0.01, verdict?.suggestedSizeUsd ?? 1);
   const tradeable = !!market.clobTokenIds?.yes && !!market.clobTokenIds?.no;
 
