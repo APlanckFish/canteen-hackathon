@@ -30,9 +30,10 @@ import {
   readUsdceBalance,
   type ApprovalStatus,
 } from "@/lib/polymarket/approvals";
-import { buildAndSignBuyOrder, type TradeSide } from "@/lib/polymarket/order";
-import { deriveOrLoadCreds, loadCachedCreds } from "@/lib/polymarket/api-key";
+import { makeViemSdkSigner } from "@/lib/polymarket/viem-signer";
 import { useT } from "@/lib/i18n/provider";
+
+type TradeSide = "YES" | "NO";
 
 type Stage =
   | "idle"
@@ -54,6 +55,37 @@ interface Props {
 
 const MIN_USDC = 0.01;
 const DEFAULT_YES_PRICE = 0.5;
+
+/**
+ * Cache the L2 API creds in localStorage, keyed by EOA. Avoids forcing the
+ * user to sign a "create-api-key" message every time they trade.
+ */
+const CREDS_KEY = "canteen.polymarket.creds.v2";
+interface CachedCreds {
+  key: string;
+  secret: string;
+  passphrase: string;
+  owner: string;
+}
+function loadCreds(owner: string): CachedCreds | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(CREDS_KEY);
+    if (!raw) return null;
+    const c = JSON.parse(raw) as CachedCreds;
+    return c.owner.toLowerCase() === owner.toLowerCase() ? c : null;
+  } catch {
+    return null;
+  }
+}
+function saveCreds(c: CachedCreds): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(CREDS_KEY, JSON.stringify(c));
+  } catch {
+    /* quota — non-fatal */
+  }
+}
 
 export function TradeDialog({ open, onClose, market, verdict }: Props) {
   const { address } = useAccount();
@@ -178,6 +210,19 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
     }
   };
 
+  /**
+   * Build & submit a real Polymarket CLOB order using the official SDK.
+   *
+   * Flow:
+   *   1. Ensure chain.
+   *   2. Wrap the viem WalletClient as an ethers-compatible signer (SDK needs
+   *      ethers v5 style _signTypedData / signMessage / getAddress).
+   *   3. Boot a ClobClient pointed at our /api/trade/clob-proxy (HKG relay)
+   *      — bypasses Polymarket CORS + US IP block in one shot.
+   *   4. Get-or-derive L2 creds (1 wallet popup if first time, cached after).
+   *   5. createOrder (1 wallet popup → EIP-712 signature).
+   *   6. postOrder — SDK builds the HMAC headers and POSTs through our relay.
+   */
   const handleSubmit = async () => {
     if (!publicClient || !address) return;
     if (!tokenId) return setErr(t("td.err.noTokenId"));
@@ -197,57 +242,81 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
       return setErr((e as Error).message);
     }
 
-    // L2 creds (1 wallet popup if first time)
-    let creds = loadCachedCreds(address);
+    // ── boot the SDK lazily ─────────────────────────────────────────────────
+    // Dynamic import — SDK + ethers v5 are heavy; only loaded when trading.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let SdkExports: any;
+    try {
+      SdkExports = await import("@polymarket/clob-client");
+    } catch (e) {
+      return setErr(`Failed to load Polymarket SDK: ${(e as Error).message}`);
+    }
+    const { ClobClient, OrderType, Side, SignatureType } = SdkExports;
+
+    const signer = makeViemSdkSigner(wc, address);
+    const proxyHost =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/api/trade/clob-proxy`
+        : "/api/trade/clob-proxy";
+    // 137 — Polygon Mainnet (matches SDK Chain.POLYGON enum value).
+    const POLYGON_CHAIN = 137;
+
+    // ── L2 creds ────────────────────────────────────────────────────────────
+    let creds = loadCreds(address);
     if (!creds) {
       setStage("authing");
       try {
-        creds = await deriveOrLoadCreds(wc, address);
+        // L1-only client just to derive creds.
+        const bootstrap = new ClobClient(proxyHost, POLYGON_CHAIN, signer);
+        const derived = await bootstrap.createOrDeriveApiKey();
+        creds = {
+          key: derived.key,
+          secret: derived.secret,
+          passphrase: derived.passphrase,
+          owner: address,
+        };
+        saveCreds(creds);
       } catch (e) {
         return setErr(t("td.err.authFailed", { msg: (e as Error).message }));
       }
     }
 
-    // Order signing (1 wallet popup)
+    // ── full client w/ L2 creds ─────────────────────────────────────────────
+    const client = new ClobClient(
+      proxyHost,
+      POLYGON_CHAIN,
+      signer,
+      { key: creds.key, secret: creds.secret, passphrase: creds.passphrase },
+      SignatureType.EOA,
+    );
+
+    // ── create + sign order (1 wallet popup) ────────────────────────────────
     setStage("signing");
-    let signed;
+    let signedOrder;
     try {
-      signed = await buildAndSignBuyOrder({
-        walletClient: wc,
-        owner: address,
-        tokenId,
-        side,
-        price: limitPrice,
-        sizeUsd,
-        negRisk,
-      });
+      // For BOTH "YES" and "NO" we BUY the corresponding outcome token —
+      // we already chose which token via `tokenId` (clobTokenIds.yes/.no).
+      signedOrder = await client.createOrder(
+        {
+          tokenID: tokenId,
+          price: limitPrice,
+          side: Side.BUY,
+          size: parseFloat(shareEstimate.toFixed(4)),
+          feeRateBps: 0,
+        },
+        { negRisk },
+      );
     } catch (e) {
       return setErr(t("td.err.signFailed", { msg: (e as Error).message }));
     }
 
-    // Submit
+    // ── postOrder via SDK → /api/trade/clob-proxy → HKG → CLOB ──────────────
     setStage("submitting");
     try {
-      const res = await fetch("/api/trade/place", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          creds,
-          order: signed,
-          owner: address,
-          orderType: "GTC",
-        }),
-      });
-      const json = (await res.json()) as {
-        ok: boolean;
-        result?: { orderId?: string; orderID?: string };
-        error?: string;
-      };
-      if (!res.ok || !json.ok) {
-        throw new Error(json.error || `submit ${res.status}`);
-      }
+      const resp = await client.postOrder(signedOrder, OrderType.GTC);
+      if (resp?.errorMsg) throw new Error(resp.errorMsg);
       const id =
-        json.result?.orderId || json.result?.orderID || "(no id)";
+        resp?.orderID || resp?.orderId || resp?.id || "(no id returned)";
       setOrderId(id);
       setStage("done");
     } catch (e) {
