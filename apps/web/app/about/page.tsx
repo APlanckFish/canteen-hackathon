@@ -27,21 +27,32 @@ export default function AboutPage() {
     },
   ];
 
+  // Tech stack chips. Grouped by concern so the order tells a story:
+  // frontend → wallet → contracts → AI/data → trading → infra.
   const techStack = [
+    // Frontend
     "Next.js 14 App Router",
     "TypeScript",
     "Tailwind + shadcn",
     "Zustand",
+    // Wallet / chain
     "viem",
     "wagmi v2",
     "RainbowKit v2",
+    // Contracts (Arc Testnet)
     "Solidity 0.8.24",
     "Foundry",
     "OpenZeppelin",
+    // AI / data
     "DeepSeek",
     "TikHub",
+    // Trading (Polymarket V2)
     "Polymarket Gamma",
-    "Vercel",
+    "@polymarket/clob-client-v2",
+    "EIP-712 / EIP-1271",
+    "Gnosis Safe v1.3.0",
+    // Infra
+    "Vercel Edge (HKG)",
     "Vercel KV",
   ];
 

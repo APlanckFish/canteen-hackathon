@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MarketSummary } from "@canteen/shared/insight";
 import { MarketCard } from "./MarketCard";
 import { Sparkles, RefreshCw } from "lucide-react";
@@ -9,35 +9,90 @@ import { useT } from "@/lib/i18n/provider";
 import type { DictKey } from "@/lib/i18n/dict";
 
 const CATEGORIES = ["All", "Politics", "Crypto", "Sports", "Entertainment"] as const;
-
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+// AI rankings are cached server-side for 1 hour, so polling more often
+// than that would just hit a stale KV entry. Refresh hourly + on tab
+// re-focus, which is what users actually care about.
+const REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 
 interface ApiResponse {
-  ok: boolean;
+  ok?: boolean;
   picks: MarketSummary[];
   all: MarketSummary[];
 }
 
-export function MarketList() {
+interface Props {
+  /**
+   * Server-rendered initial dataset. When provided, the component renders
+   * cards immediately (no skeleton flash) and starts the 60s refresh loop
+   * in the background.
+   */
+  initialData?: { picks: MarketSummary[]; all: MarketSummary[] };
+}
+
+export function MarketList({ initialData }: Props) {
   const [cat, setCat] = useState<(typeof CATEGORIES)[number]>("All");
-  const [data, setData] = useState<ApiResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<ApiResponse | null>(
+    initialData ?? null,
+  );
+  // Only show the skeleton on the very first load when we have no SSR
+  // payload. Subsequent silent refreshes never flip this to true.
+  const [loading, setLoading] = useState(!initialData);
+  const [refreshing, setRefreshing] = useState(false);
   const { t } = useT();
+
+  // Keep a ref so the interval callback always sees the latest visibility
+  // state without re-creating the timer.
+  const inFlight = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    fetcher("/api/markets/hot")
-      .then((d: ApiResponse) => {
-        if (!cancelled) setData(d);
-      })
-      .catch((e) => console.error(e))
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+
+    async function refresh(initial = false) {
+      if (inFlight.current) return;
+      // Don't burn API quota when the tab isn't visible.
+      if (
+        !initial &&
+        typeof document !== "undefined" &&
+        document.visibilityState === "hidden"
+      ) {
+        return;
+      }
+      inFlight.current = true;
+      if (!initial) setRefreshing(true);
+      try {
+        const res = await fetch("/api/markets/hot", { cache: "no-store" });
+        const json = (await res.json()) as ApiResponse;
+        if (!cancelled) setData(json);
+      } catch (e) {
+        console.warn("[markets] refresh failed:", e);
+      } finally {
+        inFlight.current = false;
+        if (!cancelled) {
+          setRefreshing(false);
+          if (initial) setLoading(false);
+        }
+      }
+    }
+
+    // If we don't have SSR data, kick off an immediate fetch; otherwise
+    // just start the polling loop.
+    if (!initialData) void refresh(true);
+
+    const id = window.setInterval(() => void refresh(false), REFRESH_INTERVAL_MS);
+
+    // Refresh once when the tab regains focus — don't make users stare
+    // at stale data.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh(false);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
     return () => {
       cancelled = true;
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const picks = data?.picks ?? [];
@@ -61,8 +116,11 @@ export function MarketList() {
               <Sparkles className="h-3.5 w-3.5" />
             </span>
             {t("markets.aiPicked")}
-            <span className="text-xs text-foreground-dim font-normal">
+            <span className="text-xs text-foreground-dim font-normal flex items-center gap-1">
               {t("markets.refresh")}
+              {refreshing ? (
+                <RefreshCw className="h-3 w-3 animate-spin text-accent" />
+              ) : null}
             </span>
           </h2>
         </div>
@@ -129,5 +187,3 @@ export function MarketList() {
     </div>
   );
 }
-
-// Avoid bundling SWR for now — we use a tiny manual fetcher above.

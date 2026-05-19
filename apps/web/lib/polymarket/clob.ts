@@ -16,8 +16,10 @@ export function buildPolymarketDeepLink(
   side: TradeSide,
 ): string {
   const slug = market.slug ?? market.id;
-  // Polymarket honors `?outcome=Yes|No` as a hint, but isn't authoritative.
-  return `https://polymarket.com/event/${encodeURIComponent(slug)}?outcome=${
+  // Use /market/<slug> rather than /event/<slug> — Polymarket 307s
+  // /market URLs to the canonical /event/<eventSlug>/<marketSlug> path,
+  // whereas /event/<marketSlug> directly returns 404 for many markets.
+  return `https://polymarket.com/market/${encodeURIComponent(slug)}?outcome=${
     side === "YES" ? "Yes" : "No"
   }`;
 }

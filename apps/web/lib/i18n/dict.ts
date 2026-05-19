@@ -38,7 +38,7 @@ export const en = {
 
   // ---- markets list ----
   "markets.aiPicked": "AI Picked",
-  "markets.refresh": "· refreshed every 60s",
+  "markets.refresh": "· refreshed every 60 min",
   "markets.loading": "loading",
   "markets.empty": "No markets returned right now — Polymarket may be cooling down. Try again in a moment.",
   "markets.emptyCategory": "No hot markets in {category} right now. Try another tab or check back in a minute.",
@@ -144,10 +144,10 @@ export const en = {
     "An x402 challenge is signed onchain by your wallet, recorded by the PaymentVault.",
   "about.step3.title": "AI report streams",
   "about.step3.desc":
-    "TikHub aggregates evidence across 4 networks; DeepSeek reasons over them and ships a verdict.",
-  "about.step4.title": "Trade on Polymarket",
+    "TikHub aggregates evidence across TikTok / X / YouTube / Google News in parallel; DeepSeek reasons over them and ships a calibrated YES/NO verdict.",
+  "about.step4.title": "Trade on Polymarket V2",
   "about.step4.desc":
-    "One-click switch to Polygon and place an order, or jump to the Polymarket UI.",
+    "We auto-detect your funding wallet (Safe / Proxy / Deposit), derive an API key with one EIP-712 signature, then place a $1-min FAK market order via clob-client-v2.",
   "about.tech": "Tech stack",
   "about.cta": "Try the demo",
 
@@ -164,13 +164,15 @@ export const en = {
 
   // ---- trade dialog ----
   "td.title": "Place order on Polymarket",
-  "td.amount.label": "Amount (USDC.e)",
+  "td.amount.label": "Amount (USD)",
   "td.amount.aiSuggest": "AI suggests {value}",
   "td.amount.shareEstimate": "≈ {shares} {side} shares @ ${price}",
+  "td.amount.min": "min ${min}",
   "td.row.usdce": "USDC.e balance",
   "td.row.pol": "POL (gas)",
   "td.row.approvals": "Approvals",
   "td.approvals.ready": "ready",
+  "td.approvals.pending": "pending",
   "td.approvals.needSetup": "needs setup",
   "td.cta.switchChain": "Switch wallet to Polygon",
   "td.cta.switching": "Switching network…",
@@ -186,13 +188,44 @@ export const en = {
   "td.done.viewOnPolymarket": "View on Polymarket",
   "td.footer": "Order is signed locally and relayed via Vercel HKG → Polymarket CLOB.",
   "td.err.noTokenId": "This market has no CLOB token id (not tradeable).",
-  "td.err.tooSmall": "Minimum order size is {min} USDC.",
+  "td.err.tooSmall": "Order too small: ${value} < min ${min}.",
   "td.err.noBalance": "Insufficient USDC.e balance.",
   "td.err.noGas": "Need a tiny bit of POL for gas — bridge or top up.",
-  "td.err.notApproved": "Approvals are not set yet.",
+  "td.err.notApproved":
+    "Approvals not set — place one trade on polymarket.com first.",
+  "td.err.notEnoughPusd":
+    "Not enough pUSD in deposit wallet — fund it on polymarket.com.",
+  "td.err.noDepositWallet": "Polymarket deposit wallet not detected.",
+  "td.err.detectingWallet": "Wallet type detection still in progress…",
+  "td.err.marketTypeUnresolved": "Market type not resolved yet",
   "td.err.authFailed": "Auth failed: {msg}",
   "td.err.signFailed": "Sign failed: {msg}",
   "td.err.submitFailed": "Submit failed: {msg}",
+
+  // ---- trade dialog · setup stepper ----
+  "td.setup.title": "Polymarket Setup",
+  "td.step.account.title": "Polymarket account ready",
+  "td.step.lookingUp": "Looking up…",
+  "td.step.notFoundPre": "Not found. Open ",
+  "td.step.notFoundPost": " with this wallet first.",
+  "td.step.depositPre": "Deposit pUSD on ",
+  "td.step.depositPost":
+    " — approvals are auto-set during your first deposit.",
+  "td.step.ready.title": "Ready to trade",
+  "td.step.completeFirst": "Complete step 1 first…",
+  "td.step.completeAbove": "Complete step 1 above",
+  "td.label.cash": "Cash",
+  "td.label.gas": "Gas",
+  "td.creds.cached": "API key cached locally.",
+  "td.creds.derive":
+    "On first trade, your wallet will ask for one extra signature (one-time, no gas) to derive a CLOB API key.",
+  "td.needPusd": "Need ${need} but only have ${have}",
+  "td.walletKind.detecting": "detecting…",
+  "td.walletKind.safe": "Safe",
+  "td.walletKind.proxy": "Proxy",
+  "td.walletKind.deposit": "Deposit",
+  "td.walletKind.unknown": "Unknown",
+  "td.close": "Close",
 
   // ---- about (faucet help) ----
   "about.faucet.title": "Need test USDC on Arc?",
@@ -245,7 +278,7 @@ export const zh: Record<DictKey, string> = {
 
   // markets list
   "markets.aiPicked": "AI 精选",
-  "markets.refresh": "· 60 秒自动刷新",
+  "markets.refresh": "· 60 分钟自动刷新",
   "markets.loading": "加载中",
   "markets.empty": "当前没有可用的市场数据，Polymarket 可能正在冷却，稍后重试。",
   "markets.emptyCategory": "当前「{category}」板块没有热门市场，换个标签或稍后再来。",
@@ -348,10 +381,10 @@ export const zh: Record<DictKey, string> = {
     "由钱包对 x402 challenge 进行链上签名，PaymentVault 合约负责记录。",
   "about.step3.title": "AI 报告流式输出",
   "about.step3.desc":
-    "TikHub 跨 4 大平台聚合证据，DeepSeek 基于证据推理并给出投注建议。",
-  "about.step4.title": "在 Polymarket 下单",
+    "TikHub 并行聚合 TikTok / X / YouTube / Google News 四源证据，DeepSeek 基于证据推理并给出校准过的 YES/NO 投注建议。",
+  "about.step4.title": "在 Polymarket V2 下单",
   "about.step4.desc":
-    "一键切到 Polygon 并发起下单，或直接深链跳转到 Polymarket 官网。",
+    "自动探测你的 funding wallet（Safe / Proxy / Deposit），用一次 EIP-712 签名派出 API key，再通过 clob-client-v2 下 $1 起的 FAK 市价单。",
   "about.tech": "技术栈",
   "about.cta": "立即体验",
 
@@ -368,13 +401,15 @@ export const zh: Record<DictKey, string> = {
 
   // trade dialog
   "td.title": "在 Polymarket 下单",
-  "td.amount.label": "金额（USDC.e）",
+  "td.amount.label": "金额（USD）",
   "td.amount.aiSuggest": "AI 建议 {value}",
   "td.amount.shareEstimate": "≈ {shares} 份 {side} @ ${price}",
+  "td.amount.min": "最低 ${min}",
   "td.row.usdce": "USDC.e 余额",
   "td.row.pol": "POL（gas）",
   "td.row.approvals": "授权状态",
   "td.approvals.ready": "已授权",
+  "td.approvals.pending": "等待中",
   "td.approvals.needSetup": "需要授权",
   "td.cta.switchChain": "切换钱包到 Polygon",
   "td.cta.switching": "切换网络中…",
@@ -390,13 +425,42 @@ export const zh: Record<DictKey, string> = {
   "td.done.viewOnPolymarket": "在 Polymarket 查看",
   "td.footer": "订单在本地钱包签名，通过 Vercel 香港节点中继到 Polymarket CLOB。",
   "td.err.noTokenId": "此市场没有 CLOB token id，不支持下单。",
-  "td.err.tooSmall": "最小订单 {min} USDC。",
+  "td.err.tooSmall": "下单金额过小：${value} 低于最低 ${min}。",
   "td.err.noBalance": "USDC.e 余额不足。",
   "td.err.noGas": "钱包需要一点 POL 用作 gas，请桥进或充值。",
-  "td.err.notApproved": "尚未完成授权。",
+  "td.err.notApproved": "尚未完成授权 — 请先在 polymarket.com 完成一次下单。",
+  "td.err.notEnoughPusd": "Deposit wallet pUSD 余额不足，请到 polymarket.com 充值。",
+  "td.err.noDepositWallet": "未检测到 Polymarket deposit wallet。",
+  "td.err.detectingWallet": "正在检测钱包类型…",
+  "td.err.marketTypeUnresolved": "市场类型尚未解析",
   "td.err.authFailed": "鉴权失败：{msg}",
   "td.err.signFailed": "签名失败：{msg}",
   "td.err.submitFailed": "提交失败：{msg}",
+
+  // trade dialog · setup stepper
+  "td.setup.title": "Polymarket 准备",
+  "td.step.account.title": "Polymarket 账户已就绪",
+  "td.step.lookingUp": "查询中…",
+  "td.step.notFoundPre": "未找到。请先用此钱包打开 ",
+  "td.step.notFoundPost": " 完成注册。",
+  "td.step.depositPre": "请到 ",
+  "td.step.depositPost":
+    " 充值 pUSD —— 首次充值时会自动配置链上授权。",
+  "td.step.ready.title": "可以下单",
+  "td.step.completeFirst": "请先完成第 1 步…",
+  "td.step.completeAbove": "请完成上方步骤",
+  "td.label.cash": "余额",
+  "td.label.gas": "Gas",
+  "td.creds.cached": "API key 已缓存到本地。",
+  "td.creds.derive":
+    "首次下单时，钱包会要求一次额外签名（一次性、免 gas）派出 CLOB API key。",
+  "td.needPusd": "需要 ${need}，但只有 ${have}",
+  "td.walletKind.detecting": "检测中…",
+  "td.walletKind.safe": "Safe",
+  "td.walletKind.proxy": "Proxy",
+  "td.walletKind.deposit": "Deposit",
+  "td.walletKind.unknown": "未知",
+  "td.close": "关闭",
 
   // about (faucet help)
   "about.faucet.title": "需要 Arc 测试网 USDC？",

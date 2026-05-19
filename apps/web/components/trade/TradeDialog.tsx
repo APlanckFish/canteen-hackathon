@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { formatUnits } from "viem";
+import { formatUnits, parseUnits } from "viem";
 import { getWalletClient } from "@wagmi/core";
 import {
   useAccount,
@@ -14,9 +14,9 @@ import {
 import {
   AlertTriangle,
   CheckCircle2,
+  Circle,
   ExternalLink,
   Loader2,
-  ShieldCheck,
   Wallet,
   X,
 } from "lucide-react";
@@ -24,12 +24,17 @@ import { polygonMainnet } from "@/lib/chains";
 import { cn, formatUsd, shortHash } from "@/lib/utils";
 import type { MarketSummary, InsightVerdict } from "@canteen/shared/insight";
 import {
-  ensureApprovals,
   readApprovalStatus,
   readPolBalance,
-  readUsdceBalance,
   type ApprovalStatus,
 } from "@/lib/polymarket/approvals";
+import { readPusdBalance } from "@/lib/polymarket/onramp";
+import { lookupFundingWallet } from "@/lib/polymarket/deposit-wallet";
+import {
+  detectWalletKind,
+  walletKindToSigType,
+  type WalletKind,
+} from "@/lib/polymarket/wallet-type";
 import { makeViemSdkSigner } from "@/lib/polymarket/viem-signer";
 import { useT } from "@/lib/i18n/provider";
 
@@ -39,8 +44,6 @@ type Stage =
   | "idle"
   | "checking"
   | "switchingChain"
-  | "approving"
-  | "authing"
   | "signing"
   | "submitting"
   | "done"
@@ -53,27 +56,52 @@ interface Props {
   verdict?: InsightVerdict;
 }
 
-const MIN_USDC = 0.01;
+/**
+ * Polymarket order minimums (official rules):
+ *   - Market orders (FOK/FAK BUY): $1 USD minimum (amount = USD).
+ *   - Limit orders (GTC):          5 shares  minimum (size  = shares).
+ *
+ * We use FAK BUY (Fill And Kill market order). FAK fills as much as
+ * possible at the best available ask and cancels any unfilled remainder
+ * — unlike FOK which rejects the whole order if it can't fully fill.
+ * FAK is what polymarket.com's "Buy" button uses.
+ */
+const MIN_USD_MARKET_ORDER = 1;
 const DEFAULT_YES_PRICE = 0.5;
 
 /**
- * Cache the L2 API creds in localStorage, keyed by EOA. Avoids forcing the
- * user to sign a "create-api-key" message every time they trade.
+ * Local cache for the user-pasted Polymarket API credentials, keyed by
+ * (EOA × deposit-wallet). Polymarket V2 makes the EOA-only path unusable for
+ * brand-new wallets (server returns "maker address not allowed, please use
+ * the deposit wallet flow"), and `createApiKey` from the SDK can't bind a
+ * key to a deposit wallet — so the user must obtain creds from
+ * polymarket.com → Settings → API Keys and paste them here once.
  */
-const CREDS_KEY = "canteen.polymarket.creds.v2";
+const CREDS_KEY = "canteen.polymarket.creds.v7";
 interface CachedCreds {
   key: string;
   secret: string;
   passphrase: string;
   owner: string;
+  funder: string;
 }
-function loadCreds(owner: string): CachedCreds | null {
+function credsMatch(
+  c: CachedCreds,
+  owner: string,
+  funder: string,
+): boolean {
+  return (
+    c.owner.toLowerCase() === owner.toLowerCase() &&
+    c.funder.toLowerCase() === funder.toLowerCase()
+  );
+}
+function loadCreds(owner: string, funder: string): CachedCreds | null {
   if (typeof localStorage === "undefined") return null;
   try {
     const raw = localStorage.getItem(CREDS_KEY);
     if (!raw) return null;
     const c = JSON.parse(raw) as CachedCreds;
-    return c.owner.toLowerCase() === owner.toLowerCase() ? c : null;
+    return credsMatch(c, owner, funder) ? c : null;
   } catch {
     return null;
   }
@@ -95,33 +123,46 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
   const config = useConfig();
   const { t } = useT();
 
-  // Default side picker:
-  //   1. AI gave a clear verdict (YES/NO) → respect it.
-  //   2. AI said SKIP or no verdict → fall back to the market's current
-  //      majority probability (e.g. yesProb=5% → default NO, yesProb=80% → YES).
-  // This way the dialog always opens to the side the user is most likely
-  // wanting to trade, removing one click for the common case.
+  // Default side: respect AI verdict, fall back to market consensus.
   const aiSide: TradeSide = useMemo(() => {
     if (verdict?.suggestedSide === "YES") return "YES";
     if (verdict?.suggestedSide === "NO") return "NO";
-    // SKIP or undefined → use market consensus
     return (market.yesProb ?? 0.5) >= 0.5 ? "YES" : "NO";
   }, [verdict?.suggestedSide, market.yesProb]);
-  const aiSize = Math.max(MIN_USDC, verdict?.suggestedSizeUsd ?? 1);
+  const aiSize = Math.max(
+    MIN_USD_MARKET_ORDER,
+    verdict?.suggestedSizeUsd ?? 5,
+  );
 
   const [side, setSide] = useState<TradeSide>(aiSide);
   const [sizeStr, setSizeStr] = useState(aiSize.toFixed(2));
   const [stage, setStage] = useState<Stage>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [approveLog, setApproveLog] = useState<string>("");
   const [orderId, setOrderId] = useState<string | null>(null);
 
-  const [usdceBal, setUsdceBal] = useState<bigint | null>(null);
+  // On-chain state read from the deposit wallet (the funder).
+  const [pusdBal, setPusdBal] = useState<bigint | null>(null);
   const [polBal, setPolBal] = useState<bigint | null>(null);
   const [approvals, setApprovals] = useState<ApprovalStatus | null>(null);
+  // Authoritative negRisk flag (resolved via CLOB /neg-risk).
+  const [negRisk, setNegRisk] = useState<boolean | null>(
+    market.negRisk === true ? true : null,
+  );
+  // V2 funding wallet (deposit wallet owned by the EOA on polymarket.com).
+  // null = not looked up yet, "" = looked up but user has no Polymarket account.
+  const [fundingWallet, setFundingWallet] = useState<
+    `0x${string}` | "" | null
+  >(null);
+  // Detected wallet kind — drives which SignatureTypeV2 we pass to the SDK.
+  // Polymarket Safe wallets need sigType=2, deposit wallets sigType=3, etc.
+  const [walletKind, setWalletKind] = useState<WalletKind | null>(null);
 
-  const tokenId = side === "YES" ? market.clobTokenIds?.yes : market.clobTokenIds?.no;
-  const negRisk = market.negRisk === true;
+  // Stored creds (loaded from localStorage on mount; refreshed when SDK
+  // auto-derives a fresh key on first trade).
+  const [savedCreds, setSavedCreds] = useState<CachedCreds | null>(null);
+
+  const tokenId =
+    side === "YES" ? market.clobTokenIds?.yes : market.clobTokenIds?.no;
 
   const limitPrice = useMemo(() => {
     const base = side === "YES" ? market.yesProb : 1 - market.yesProb;
@@ -132,6 +173,15 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
 
   const sizeUsd = parseFloat(sizeStr || "0");
   const shareEstimate = limitPrice > 0 ? sizeUsd / limitPrice : 0;
+  const requiredPusd = useMemo(
+    () => parseUnits(Math.max(0, sizeUsd).toFixed(6), 6),
+    [sizeUsd],
+  );
+
+  // Per-market minimum for our market-order flow:
+  //   FOK BUY  → $1 USD floor (Polymarket's official minimum).
+  // We still keep a tick-aligned price for diagnostics (estimating shares).
+  const minUsd = MIN_USD_MARKET_ORDER;
 
   // ── reset on open ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -140,24 +190,110 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
     setSizeStr(aiSize.toFixed(2));
     setStage("idle");
     setErrorMsg(null);
-    setApproveLog("");
     setOrderId(null);
     setApprovals(null);
-    setUsdceBal(null);
+    setPusdBal(null);
     setPolBal(null);
+    setFundingWallet(null);
+    setWalletKind(null);
+    setSavedCreds(null);
+    setNegRisk(market.negRisk === true ? true : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // ── resolve negRisk via CLOB /neg-risk ────────────────────────────────────
+  useEffect(() => {
+    if (!open || !tokenId) return;
+    if (negRisk !== null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(
+          `/api/trade/clob-proxy/neg-risk?token_id=${encodeURIComponent(tokenId)}`,
+          { cache: "no-store" },
+        );
+        const json = (await r.json()) as { neg_risk?: boolean; error?: string };
+        if (cancelled) return;
+        if (!r.ok || typeof json.neg_risk !== "boolean") {
+          throw new Error(json.error || `neg-risk lookup failed (${r.status})`);
+        }
+        setNegRisk(json.neg_risk);
+      } catch (e) {
+        if (cancelled) return;
+        setErr(`Failed to resolve market type: ${(e as Error).message}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, tokenId, negRisk]);
+
+  // ── lookup deposit wallet from polymarket.com profile ─────────────────────
+  useEffect(() => {
+    if (!open || !address) return;
+    if (fundingWallet !== null) return;
+    let cancelled = false;
+    (async () => {
+      console.log("[funding] looking up", address);
+      const w = await lookupFundingWallet(address);
+      if (cancelled) return;
+      console.log("[funding] resolved", w);
+      setFundingWallet(w ?? "");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, address, fundingWallet]);
+
+  // ── detect wallet kind once funding wallet is known ────────────────────────
+  // We need to know if the funder is a Gnosis Safe (sigType=2),
+  // Polymarket Proxy (sigType=1), or new Deposit Wallet (sigType=3) so we
+  // pass the matching SignatureTypeV2 to the SDK at order signing time.
+  useEffect(() => {
+    if (!open || !publicClient) return;
+    if (!fundingWallet || fundingWallet.length === 0) return;
+    if (walletKind !== null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await detectWalletKind(publicClient, fundingWallet);
+        if (cancelled) return;
+        console.log("[walletKind] detected", r);
+        setWalletKind(r.kind);
+      } catch (e) {
+        if (cancelled) return;
+        console.warn("[walletKind] detect failed:", e);
+        setWalletKind("UNKNOWN");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, publicClient, fundingWallet, walletKind]);
+
+  // Load any previously saved creds once funding wallet is known.
+  useEffect(() => {
+    if (!open || !address || !fundingWallet || fundingWallet.length === 0) {
+      setSavedCreds(null);
+      return;
+    }
+    setSavedCreds(loadCreds(address, fundingWallet));
+  }, [open, address, fundingWallet]);
+
+  // Refresh on-chain balances + approvals (read from the deposit wallet).
   const refreshChainState = useCallback(async () => {
     if (!address || !publicClient) return;
+    if (negRisk === null) return;
+    if (!fundingWallet || fundingWallet.length === 0) return;
     setStage("checking");
     try {
-      const [u, p, a] = await Promise.all([
-        readUsdceBalance(publicClient, address),
-        readPolBalance(publicClient, address),
-        readApprovalStatus(publicClient, address, negRisk),
+      const funder = fundingWallet;
+      const [pu, p, a] = await Promise.all([
+        readPusdBalance(publicClient, funder),
+        readPolBalance(publicClient, address), // gas paid by EOA owner
+        readApprovalStatus(publicClient, funder, negRisk),
       ]);
-      setUsdceBal(u);
+      setPusdBal(pu);
       setPolBal(p);
       setApprovals(a);
       setStage("idle");
@@ -165,20 +301,16 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
       setErrorMsg((e as Error).message);
       setStage("error");
     }
-  }, [address, publicClient, negRisk]);
+  }, [address, publicClient, negRisk, fundingWallet]);
 
   useEffect(() => {
-    if (!open || !address) return;
+    if (!open || !address || negRisk === null) return;
+    if (!fundingWallet || fundingWallet.length === 0) return;
     void refreshChainState();
-  }, [open, address, refreshChainState]);
+  }, [open, address, negRisk, fundingWallet, refreshChainState]);
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
-  /**
-   * Ensure wallet is on Polygon AND fetch a wallet client lazily — the
-   * `useWalletClient` hook returns undefined when chain is wrong, which was
-   * the cause of the disabled CTA in the previous version.
-   */
   const ensureChainAndWallet = async () => {
     if (chainId !== polygonMainnet.id) {
       setStage("switchingChain");
@@ -189,47 +321,31 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
     return wc;
   };
 
-  const handleApprove = async () => {
-    if (!publicClient || !address || !approvals) return;
-    setErrorMsg(null);
-    try {
-      const wc = await ensureChainAndWallet();
-      setStage("approving");
-      await ensureApprovals({
-        walletClient: wc,
-        publicClient,
-        owner: address,
-        negRisk,
-        status: approvals,
-        onStep: (label) => setApproveLog(label),
-      });
-      await refreshChainState();
-    } catch (e) {
-      setErrorMsg((e as Error).message);
-      setStage("error");
-    }
-  };
-
   /**
-   * Build & submit a real Polymarket CLOB order using the official SDK.
-   *
-   * Flow:
-   *   1. Ensure chain.
-   *   2. Wrap the viem WalletClient as an ethers-compatible signer (SDK needs
-   *      ethers v5 style _signTypedData / signMessage / getAddress).
-   *   3. Boot a ClobClient pointed at our /api/trade/clob-proxy (HKG relay)
-   *      — bypasses Polymarket CORS + US IP block in one shot.
-   *   4. Get-or-derive L2 creds (1 wallet popup if first time, cached after).
-   *   5. createOrder (1 wallet popup → EIP-712 signature).
-   *   6. postOrder — SDK builds the HMAC headers and POSTs through our relay.
+   * Submit a real Polymarket V2 CLOB order via @polymarket/clob-client-v2.
+   * SDK auto-derives the L2 API key on first call; signature type is picked
+   * based on the on-chain wallet kind (Safe/Proxy/DepositWallet).
    */
   const handleSubmit = async () => {
+    console.log("[submit] handleSubmit called");
     if (!publicClient || !address) return;
     if (!tokenId) return setErr(t("td.err.noTokenId"));
-    if (!(sizeUsd >= MIN_USDC))
-      return setErr(t("td.err.tooSmall", { min: MIN_USDC }));
-    if (!usdceBal || usdceBal < BigInt(Math.ceil(sizeUsd * 1e6)))
-      return setErr(t("td.err.noBalance"));
+    if (negRisk === null) return setErr(t("td.err.marketTypeUnresolved"));
+    if (!fundingWallet || fundingWallet.length === 0) {
+      return setErr(t("td.err.noDepositWallet"));
+    }
+    if (walletKind === null) {
+      return setErr(t("td.err.detectingWallet"));
+    }
+    if (!(sizeUsd >= minUsd))
+      return setErr(
+        t("td.err.tooSmall", {
+          value: sizeUsd.toFixed(2),
+          min: minUsd.toFixed(2),
+        }),
+      );
+    if (!pusdBal || pusdBal < requiredPusd)
+      return setErr(t("td.err.notEnoughPusd"));
     if (!polBal || polBal === 0n) return setErr(t("td.err.noGas"));
     if (!approvals?.allReady) return setErr(t("td.err.notApproved"));
 
@@ -242,139 +358,194 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
       return setErr((e as Error).message);
     }
 
-    // ── boot the SDK lazily ─────────────────────────────────────────────────
-    // Dynamic import — SDK + ethers v5 are heavy; only loaded when trading.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let SdkExports: any;
     try {
-      SdkExports = await import("@polymarket/clob-client");
+      SdkExports = await import("@polymarket/clob-client-v2");
     } catch (e) {
-      return setErr(`Failed to load Polymarket SDK: ${(e as Error).message}`);
+      return setErr(`Failed to load Polymarket V2 SDK: ${(e as Error).message}`);
     }
-    const { ClobClient, OrderType, Side, SignatureType } = SdkExports;
+    const { ClobClient, OrderType, Side, Chain } = SdkExports;
 
     const signer = makeViemSdkSigner(wc, address);
     const proxyHost =
       typeof window !== "undefined"
         ? `${window.location.origin}/api/trade/clob-proxy`
         : "/api/trade/clob-proxy";
-    // 137 — Polygon Mainnet (matches SDK Chain.POLYGON enum value).
-    const POLYGON_CHAIN = 137;
 
-    // ── L2 creds ────────────────────────────────────────────────────────────
-    let creds = loadCreds(address);
-    if (!creds) {
-      setStage("authing");
+    // Pick the SignatureTypeV2 based on the actual on-chain contract kind.
+    // For your wallet `0xeabd92...` we detected GNOSIS_SAFE → sigType=2.
+    // Wrong sigType → server rejects with version_mismatch / signer_mismatch.
+    const sigType = walletKindToSigType(walletKind ?? "UNKNOWN");
+    console.log("[submit] using sigType", sigType, "for kind", walletKind);
+
+    // ── obtain L2 creds ───────────────────────────────────────────────────
+    // Two paths:
+    //   1) User pasted creds from polymarket.com (if available, use them).
+    //   2) Otherwise auto-derive via SDK. For "Existing Safe/Proxy users"
+    //      (sigType 1/2), official docs say their setup is unaffected by
+    //      V2, and SDK createOrDeriveApiKey() should work — the key is
+    //      bound to the EOA but the Safe/Proxy still validates orders via
+    //      its own signing path.
+    let credsToUse:
+      | { key: string; secret: string; passphrase: string }
+      | null = savedCreds
+      ? {
+          key: savedCreds.key,
+          secret: savedCreds.secret,
+          passphrase: savedCreds.passphrase,
+        }
+      : null;
+
+    if (!credsToUse) {
       try {
-        // L1-only client just to derive creds. throwOnError=true so axios
-        // failures surface as proper exceptions (instead of returning a
-        // {error} object that gets silently treated as success).
-        const bootstrap = new ClobClient(
-          proxyHost,
-          POLYGON_CHAIN,
+        setStage("signing");
+        console.log("[auth] auto-deriving CLOB API creds via SDK…");
+        const bootstrap = new ClobClient({
+          host: proxyHost,
+          chain: Chain.POLYGON,
           signer,
-          undefined, // creds (we're deriving them now)
-          undefined, // signatureType
-          undefined, // funderAddress
-          undefined, // geoBlockToken
-          undefined, // useServerTime
-          undefined, // builderConfig
-          undefined, // getSigner
-          undefined, // retryOnError
-          undefined, // tickSizeTtlMs
-          true, // throwOnError
-        );
-        const derived = await bootstrap.createOrDeriveApiKey();
-        console.log("[deriveApiKey raw response]", derived);
-        if (derived?.error || !derived?.key) {
+          throwOnError: false,
+        });
+        let derived = await bootstrap.createOrDeriveApiKey();
+        console.log("[auth] createOrDeriveApiKey →", derived);
+        if (!derived?.key) {
+          derived = await bootstrap.deriveApiKey();
+          console.log("[auth] deriveApiKey fallback →", derived);
+        }
+        if (!derived?.key) {
           throw new Error(
             derived?.error ||
-              `unexpected derive response: ${JSON.stringify(derived).slice(0, 400)}`,
+              `auth response missing key: ${JSON.stringify(derived).slice(0, 400)}`,
           );
         }
-        creds = {
+        credsToUse = {
           key: derived.key,
           secret: derived.secret,
           passphrase: derived.passphrase,
-          owner: address,
         };
-        saveCreds(creds);
+        // Persist so subsequent submits don't re-prompt for signature.
+        const c: CachedCreds = {
+          ...credsToUse,
+          owner: address,
+          funder: fundingWallet,
+        };
+        saveCreds(c);
+        setSavedCreds(c);
       } catch (e) {
-        return setErr(t("td.err.authFailed", { msg: (e as Error).message }));
-      }
-    }
-
-    // ── full client w/ L2 creds ─────────────────────────────────────────────
-    // throwOnError: true makes SDK convert {error, status} responses into
-    // ApiError throws, so our catch blocks actually get the message.
-    const client = new ClobClient(
-      proxyHost,
-      POLYGON_CHAIN,
-      signer,
-      { key: creds.key, secret: creds.secret, passphrase: creds.passphrase },
-      SignatureType.EOA,
-      undefined, // funderAddress
-      undefined, // geoBlockToken
-      undefined, // useServerTime
-      undefined, // builderConfig
-      undefined, // getSigner
-      undefined, // retryOnError
-      undefined, // tickSizeTtlMs
-      true, // throwOnError ← important
-    );
-
-    // ── create + sign order (1 wallet popup) ────────────────────────────────
-    setStage("signing");
-    let signedOrder;
-    try {
-      // For BOTH "YES" and "NO" we BUY the corresponding outcome token —
-      // we already chose which token via `tokenId` (clobTokenIds.yes/.no).
-      signedOrder = await client.createOrder(
-        {
-          tokenID: tokenId,
-          price: limitPrice,
-          side: Side.BUY,
-          size: parseFloat(shareEstimate.toFixed(4)),
-          feeRateBps: 0,
-        },
-        { negRisk },
-      );
-    } catch (e) {
-      return setErr(t("td.err.signFailed", { msg: (e as Error).message }));
-    }
-
-    // ── postOrder via SDK → /api/trade/clob-proxy → HKG → CLOB ──────────────
-    setStage("submitting");
-    try {
-      const resp = await client.postOrder(signedOrder, OrderType.GTC);
-      // Print the full upstream response in dev tools so we can see what
-      // Polymarket actually said when something is off (no id, errorMsg,
-      // or "matched but no fills" etc.).
-      console.log("[postOrder raw response]", resp);
-
-      // SDK returns one of these shapes:
-      //   success: { success: true, orderID, status, ... }
-      //   error:   { error: "...", errorMsg?: "...", status: 4xx }   (when throwOnError=false)
-      // With throwOnError=true the error shape becomes a thrown ApiError.
-      if (resp?.error || resp?.errorMsg) {
-        throw new Error(resp.error || resp.errorMsg);
-      }
-      if (resp?.success === false) {
-        throw new Error(JSON.stringify(resp).slice(0, 500));
-      }
-      const id = resp?.orderID || resp?.orderId || resp?.id;
-      if (!id) {
-        // No id AND no error means the upstream returned an unexpected shape.
-        // Surface the raw payload so we can fix without another round-trip.
-        throw new Error(
-          `unexpected response shape: ${JSON.stringify(resp).slice(0, 400)}`,
+        return setErr(
+          `Failed to derive API credentials: ${(e as Error).message}`,
         );
       }
-      setOrderId(id);
-      setStage("done");
+    }
+
+    const client = new ClobClient({
+      host: proxyHost,
+      chain: Chain.POLYGON,
+      signer,
+      creds: credsToUse,
+      signatureType: sigType,
+      funderAddress: fundingWallet,
+      throwOnError: true,
+    });
+
+    // ── DIAGNOSTIC: inspect what address the API key is bound to ──────────
+    // The error "the order signer address has to be the address of the API
+    // KEY" means the server-side binding of the key doesn't match the order
+    // signer field (= deposit wallet for POLY_1271). We dump the raw
+    // /auth/api-keys response so we can see the actual binding.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const keys = await (client as any).getApiKeys?.();
+      console.log("[diag] /auth/api-keys for this creds →", keys);
+    } catch (e) {
+      console.warn("[diag] getApiKeys() failed (non-fatal):", e);
+    }
+
+    setStage("signing");
+    let resp;
+    try {
+      // ── Map market.tickSize (number) → SDK's TickSize string ───────────
+      // SDK's ROUNDING_CONFIG only accepts the 4 exact keys below.
+      // Naive `.toFixed(2)` produces "0.10" → ROUNDING_CONFIG["0.10"] is
+      // undefined → SDK crashes with "Cannot read properties of undefined
+      // (reading 'price')" inside getMarketOrderRawAmounts. So we snap to
+      // the nearest allowed key here.
+      const tickSizeStr: "0.1" | "0.01" | "0.001" | "0.0001" = (() => {
+        const t = market.tickSize ?? 0.01;
+        if (t <= 0.0001) return "0.0001";
+        if (t <= 0.001) return "0.001";
+        if (t <= 0.01) return "0.01";
+        return "0.1";
+      })();
+      // ── Use a MARKET (FOK) BUY order ─────────────────────────────────────
+      // Polymarket's official minimum for market orders is $1 USD; for
+      // GTC limit orders it's 5 shares. `amount` for a BUY market order is
+      // the USD amount to spend.
+      //
+      // We pass `price` explicitly (= our limit price). If we omit it, the
+      // SDK calls `calculateMarketPrice` which fetches the orderbook and
+      // walks asks; on thin/empty books or unexpected response shape, that
+      // throws cryptic errors like "Cannot read properties of undefined
+      // (reading 'price')". Passing it directly is more robust.
+      // ── FAK BUY (Fill And Kill) ──────────────────────────────────────────
+      // We use FAK rather than FOK because FOK rejects the whole order if
+      // it can't be fully filled at the requested price; FAK fills as much
+      // as possible at the best available ask and cancels the remainder.
+      //
+      // We DO NOT pass `price`. When omitted, the SDK calls
+      // `calculateMarketPrice` which fetches the orderbook and returns the
+      // worst price needed to fill `amount` USD — this is exactly what a
+      // user expects from a market BUY.
+      const args = {
+        tokenID: tokenId,
+        amount: parseFloat(sizeUsd.toFixed(2)),
+        side: Side.BUY,
+        orderType: OrderType.FAK,
+      };
+      console.log("[V2 createMarketOrder] args", {
+        ...args,
+        tickSize: tickSizeStr,
+        negRisk,
+      });
+
+      let signed;
+      try {
+        signed = await client.createMarketOrder(args, {
+          tickSize: tickSizeStr,
+          negRisk,
+        });
+      } catch (e) {
+        console.error("[V2 createMarketOrder] failed", e);
+        throw new Error(
+          `createMarketOrder failed: ${(e as Error)?.message || String(e)}`,
+        );
+      }
+      console.log("[V2 signed market order]", {
+        signer: signed.signer,
+        maker: signed.maker,
+        signatureType: signed.signatureType,
+        signaturePrefix:
+          typeof signed.signature === "string"
+            ? signed.signature.slice(0, 40) + "…"
+            : "?",
+      });
+
+      setStage("submitting");
+      resp = await client.postOrder(signed, OrderType.FAK);
+      console.log("[V2 postOrder response]", resp);
     } catch (e) {
       return setErr(t("td.err.submitFailed", { msg: (e as Error).message }));
     }
+
+    const id = resp?.orderID || resp?.orderId || resp?.id;
+    if (!id) {
+      return setErr(
+        `Submit succeeded but no orderID: ${JSON.stringify(resp).slice(0, 400)}`,
+      );
+    }
+    setOrderId(id);
+    setStage("done");
   };
 
   const setErr = (msg: string) => {
@@ -382,19 +553,39 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
     setStage("error");
   };
 
-  // ── derived flags ──────────────────────────────────────────────────────────
+  // ── derived flags & step-by-step state ────────────────────────────────────
   const onPolygon = chainId === polygonMainnet.id;
-  const haveBalance =
-    usdceBal !== null && usdceBal >= BigInt(Math.ceil(sizeUsd * 1e6));
+  const haveDepositWallet =
+    fundingWallet !== null && fundingWallet !== "" && fundingWallet.length > 0;
+  const havePusd = pusdBal !== null && pusdBal >= requiredPusd;
   const haveGas = polBal !== null && polBal > 0n;
-  const needApprove = approvals !== null && !approvals.allReady;
-  // Important: only use `busy` to disable the CTA, NOT the wrong-chain state
-  // (which the CTA itself handles by switching).
+  const haveApprovals = !!approvals?.allReady;
+  const haveCreds = !!savedCreds;
+  const haveAnyPusd = pusdBal !== null && pusdBal > 0n;
+
+  // 4-step onboarding state. Each step is "done" / "current" / "pending".
+  const stepStatuses = {
+    s1Account: haveDepositWallet,
+    // We use "any pUSD in deposit wallet AND approvals=ready" as the proxy
+    // signal that the user has completed their first trade on polymarket.com
+    // (which is what mints both the pUSD and the on-chain approvals).
+    s2FirstTrade: haveDepositWallet && haveAnyPusd && haveApprovals,
+    // Step 3 is shown as done if user already has creds (cached or pasted).
+    // It's no longer required up front — submit will auto-derive on demand.
+    s3PasteKey: haveCreds,
+    // Step 4 only requires creds OR auto-derive capability + balance + gas.
+    s4Ready:
+      haveDepositWallet &&
+      haveAnyPusd &&
+      haveApprovals &&
+      haveGas &&
+      walletKind !== null,
+  };
+
+  const allReady = stepStatuses.s4Ready && havePusd && !!tokenId;
   const busy =
     stage === "checking" ||
     stage === "switchingChain" ||
-    stage === "approving" ||
-    stage === "authing" ||
     stage === "signing" ||
     stage === "submitting";
 
@@ -402,18 +593,18 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto"
       onClick={onClose}
     >
       <div
-        className="glass-card-strong relative w-full max-w-md rounded-2xl p-6 space-y-5"
+        className="glass-card-strong relative w-full max-w-md rounded-2xl p-6 space-y-5 my-8"
         onClick={(e) => e.stopPropagation()}
       >
         <button
           type="button"
           onClick={onClose}
           className="absolute right-4 top-4 text-foreground-dim hover:text-white transition-colors"
-          aria-label="close"
+          aria-label={t("td.close")}
         >
           <X className="h-4 w-4" />
         </button>
@@ -421,7 +612,7 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <div className="space-y-1">
           <div className="text-xs uppercase tracking-wider text-foreground-dim">
-            {t("td.title")}
+            {t("td.title")} · V2
           </div>
           <div className="text-lg font-semibold leading-tight line-clamp-2">
             {market.question}
@@ -468,63 +659,156 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
           <div className="relative">
             <input
               type="number"
-              min={MIN_USDC}
-              step="0.01"
+              min={minUsd.toFixed(2)}
+              step="0.25"
               value={sizeStr}
               onChange={(e) => setSizeStr(e.target.value)}
               disabled={busy}
               className="w-full rounded-xl border border-border bg-black/30 px-4 py-3 text-base outline-none focus:border-accent/60 disabled:opacity-50"
             />
             <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-foreground-dim">
-              USDC
+              USD
             </span>
           </div>
-          <div className="text-[11px] text-foreground-dim">
-            {t("td.amount.shareEstimate", {
-              shares: shareEstimate.toFixed(4),
-              side,
-              price: limitPrice.toFixed(2),
-            })}
+          <div className="text-[11px] text-foreground-dim flex items-center justify-between">
+            <span>
+              {t("td.amount.shareEstimate", {
+                shares: shareEstimate.toFixed(2),
+                side,
+                price: limitPrice.toFixed(2),
+              })}
+            </span>
+            <span
+              className={cn(
+                sizeUsd < minUsd ? "text-no" : "text-foreground-dim",
+              )}
+            >
+              {t("td.amount.min", { min: minUsd.toFixed(2) })}
+            </span>
           </div>
         </div>
 
-        {/* ── Wallet status ──────────────────────────────────────────────── */}
-        <div className="rounded-xl border border-border bg-black/20 p-3 space-y-1.5 text-xs">
-          <Row
-            label={t("td.row.usdce")}
-            value={
-              usdceBal === null ? "…" : `${formatUnits(usdceBal, 6)} USDC.e`
+        {/* ── 4-step onboarding stepper ─────────────────────────────────── */}
+        <div className="rounded-xl border border-border bg-black/20 p-3 space-y-3 text-xs">
+          <div className="text-[11px] uppercase tracking-wider text-foreground-dim">
+            {t("td.setup.title")}
+          </div>
+
+          {/* Step 1: deposit wallet detected + funded + approved */}
+          <Step
+            num={1}
+            done={stepStatuses.s1Account && stepStatuses.s2FirstTrade}
+            title={t("td.step.account.title")}
+            body={
+              fundingWallet === null ? (
+                <span className="text-foreground-dim">
+                  {t("td.step.lookingUp")}
+                </span>
+              ) : !haveDepositWallet ? (
+                <span className="text-no">
+                  {t("td.step.notFoundPre")}
+                  <a
+                    href="https://polymarket.com"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent underline"
+                  >
+                    polymarket.com
+                  </a>
+                  {t("td.step.notFoundPost")}
+                </span>
+              ) : (
+                <div className="space-y-0.5">
+                  <div className="font-mono">
+                    {shortHash(fundingWallet, 6, 6)}
+                    <span className="text-foreground-dim ml-1">
+                      ({walletKind === null
+                        ? t("td.walletKind.detecting")
+                        : walletKind === "GNOSIS_SAFE"
+                          ? t("td.walletKind.safe")
+                          : walletKind === "POLY_PROXY"
+                            ? t("td.walletKind.proxy")
+                            : walletKind === "DEPOSIT_WALLET"
+                              ? t("td.walletKind.deposit")
+                              : t("td.walletKind.unknown")})
+                    </span>
+                  </div>
+                  <div className="text-foreground-dim">
+                    {t("td.label.cash")}: $
+                    {pusdBal === null
+                      ? "…"
+                      : parseFloat(formatUnits(pusdBal, 6)).toFixed(2)}
+                    {" · "}
+                    {t("td.row.approvals")}:{" "}
+                    {approvals === null
+                      ? "…"
+                      : haveApprovals
+                        ? t("td.approvals.ready")
+                        : t("td.approvals.pending")}
+                  </div>
+                  {!stepStatuses.s2FirstTrade && haveDepositWallet ? (
+                    <div className="text-foreground-muted">
+                      {t("td.step.depositPre")}
+                      <a
+                        href="https://polymarket.com"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-accent underline inline-flex items-center gap-0.5"
+                      >
+                        polymarket.com{" "}
+                        <ExternalLink className="h-2.5 w-2.5" />
+                      </a>
+                      {t("td.step.depositPost")}
+                    </div>
+                  ) : null}
+                </div>
+              )
             }
-            ok={haveBalance}
           />
-          <Row
-            label={t("td.row.pol")}
-            value={
-              polBal === null
-                ? "…"
-                : `${parseFloat(formatUnits(polBal, 18)).toFixed(4)} POL`
+
+          {/* Step 2: ready to trade */}
+          <Step
+            num={2}
+            done={stepStatuses.s4Ready}
+            title={t("td.step.ready.title")}
+            body={
+              !stepStatuses.s2FirstTrade ? (
+                <span className="text-foreground-dim">
+                  {t("td.step.completeFirst")}
+                </span>
+              ) : stepStatuses.s4Ready ? (
+                <div className="space-y-0.5">
+                  <div className="text-foreground-dim">
+                    {t("td.label.gas")}:{" "}
+                    {polBal === null
+                      ? "…"
+                      : `${parseFloat(formatUnits(polBal, 18)).toFixed(3)} POL`}
+                  </div>
+                  <div className="text-foreground-dim text-[10px]">
+                    {haveCreds ? t("td.creds.cached") : t("td.creds.derive")}
+                  </div>
+                  {!havePusd ? (
+                    <div className="text-no">
+                      {t("td.needPusd", {
+                        need: formatUnits(requiredPusd, 6),
+                        have:
+                          pusdBal === null
+                            ? "…"
+                            : parseFloat(formatUnits(pusdBal, 6)).toFixed(2),
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <span className="text-foreground-dim">
+                  {t("td.step.completeAbove")}
+                </span>
+              )
             }
-            ok={haveGas}
-          />
-          <Row
-            label={t("td.row.approvals")}
-            value={
-              approvals === null
-                ? "…"
-                : approvals.allReady
-                  ? t("td.approvals.ready")
-                  : t("td.approvals.needSetup")
-            }
-            ok={!!approvals?.allReady}
           />
         </div>
 
         {/* ── Action button ──────────────────────────────────────────────── */}
-        {/*
-          Single-button strategy. The button text & action change based on the
-          current state — we DON'T disable it for chain-mismatch (clicking will
-          switch chain). Disabling is only used during in-flight async work.
-        */}
         {!onPolygon ? (
           <button
             type="button"
@@ -553,47 +837,17 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
               </>
             )}
           </button>
-        ) : needApprove ? (
-          <button
-            type="button"
-            onClick={handleApprove}
-            disabled={busy}
-            className="neon-button h-12 w-full"
-          >
-            {stage === "approving" ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span>{approveLog || t("td.cta.approving")}</span>
-              </>
-            ) : (
-              <>
-                <ShieldCheck className="h-4 w-4" />
-                <span>{t("td.cta.setApprovals")}</span>
-              </>
-            )}
-          </button>
         ) : (
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={
-              busy ||
-              !haveBalance ||
-              !haveGas ||
-              stage === "done" ||
-              !tokenId
-            }
+            disabled={busy || !allReady || stage === "done"}
             className={cn(
               "neon-button h-12 w-full",
               side === "NO" && "bg-no/80 hover:bg-no",
             )}
           >
-            {stage === "authing" ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span>{t("td.cta.authing")}</span>
-              </>
-            ) : stage === "signing" ? (
+            {stage === "signing" ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
                 <span>{t("td.cta.signing")}</span>
@@ -616,7 +870,7 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
           </button>
         )}
 
-        {/* ── Result ─────────────────────────────────────────────────────── */}
+        {/* ── Result / error ─────────────────────────────────────────────── */}
         {stage === "done" && orderId ? (
           <div className="rounded-lg border border-yes/30 bg-yes-soft p-3 text-xs space-y-1">
             <div className="flex items-center gap-1.5 text-yes font-semibold">
@@ -627,7 +881,7 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
               {t("td.done.orderId", { id: shortHash(orderId, 8, 6) })}
             </div>
             <a
-              href={`https://polymarket.com/event/${market.slug}`}
+              href={`https://polymarket.com/market/${market.slug}`}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-accent hover:underline"
@@ -654,21 +908,39 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
   );
 }
 
-function Row({
-  label,
-  value,
-  ok,
+function Step({
+  num,
+  done,
+  title,
+  body,
 }: {
-  label: string;
-  value: string;
-  ok: boolean;
+  num: number;
+  done: boolean;
+  title: string;
+  body: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-foreground-dim">{label}</span>
-      <span className={cn("font-mono", ok ? "text-yes" : "text-foreground-muted")}>
-        {value}
-      </span>
+    <div className="flex gap-2.5">
+      <div className="shrink-0 mt-0.5">
+        {done ? (
+          <CheckCircle2 className="h-4 w-4 text-yes" />
+        ) : (
+          <Circle className="h-4 w-4 text-foreground-dim" />
+        )}
+      </div>
+      <div className="flex-1 min-w-0 space-y-0.5">
+        <div
+          className={cn(
+            "text-xs font-semibold",
+            done ? "text-yes" : "text-foreground-muted",
+          )}
+        >
+          {num}. {title}
+        </div>
+        <div className="text-[11px] text-foreground-muted leading-relaxed">
+          {body}
+        </div>
+      </div>
     </div>
   );
 }
