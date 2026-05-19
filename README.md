@@ -5,8 +5,6 @@
 
 [![English](https://img.shields.io/badge/lang-English-blue)](./README.md) [![中文](https://img.shields.io/badge/lang-中文-red)](./README.zh.md)
 
-📖 **Deep technical write-up**: [docs/TECH.md](./docs/TECH.md)
-
 ---
 
 ## 🚀 Live Demo
@@ -75,8 +73,7 @@ canteen-hackthon/
 ├── packages/shared/             # cross-package types + ABI + protocol consts
 ├── contracts/                   # Foundry workspace - PaymentVault.sol
 ├── scripts/deploy-vercel.sh     # one-shot Vercel deploy
-├── docs/TECH.md                 # detailed technical write-up
-└── README.md / README.en.md     # this file
+└── README.md / README.zh.md     # this file (EN / 中文)
 ```
 
 ### Polymarket V2 modules (`apps/web/lib/polymarket/`)

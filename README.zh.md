@@ -5,8 +5,6 @@
 
 [![English](https://img.shields.io/badge/lang-English-blue)](./README.md) [![中文](https://img.shields.io/badge/lang-中文-red)](./README.zh.md)
 
-📖 **技术原理详解**: [docs/TECH.md](./docs/TECH.md)
-
 ---
 
 ## 🚀 在线体验
@@ -75,8 +73,7 @@ canteen-hackthon/
 ├── packages/shared/             # 跨包类型 + ABI + 协议常量
 ├── contracts/                   # Foundry 工作区 - PaymentVault.sol
 ├── scripts/deploy-vercel.sh     # 一键部署到 Vercel
-├── docs/TECH.md                 # 详细技术原理
-└── README.md / README.en.md     # 本文档
+└── README.md / README.zh.md     # 本文档（英文 / 中文）
 ```
 
 ### Polymarket V2 接入模块（`apps/web/lib/polymarket/`）
