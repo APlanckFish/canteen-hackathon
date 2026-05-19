@@ -42,6 +42,8 @@ export const en = {
   "markets.loading": "loading",
   "markets.empty": "No markets returned right now — Polymarket may be cooling down. Try again in a moment.",
   "markets.emptyCategory": "No hot markets in {category} right now. Try another tab or check back in a minute.",
+  "markets.loadingMore": "Loading more…",
+  "markets.noMore": "You've reached the end.",
   "markets.cat.All": "All",
   "markets.cat.Politics": "Politics",
   "markets.cat.Crypto": "Crypto",
@@ -55,6 +57,7 @@ export const en = {
   "card.volume24h": "{value} 24h vol",
   "card.daysLeft": "{n}d",
   "card.aiInsight": "AI Insight",
+  "card.moreOutcomes": "+{n} more",
 
   // ---- event detail ----
   "event.back": "Back to markets",
@@ -66,6 +69,8 @@ export const en = {
   "event.unlockDesc":
     "One-time payment per event. Streamed AI report + multi-source evidence.",
   "event.tradeTitle": "Trade",
+  "event.outcomes.title": "Pick an outcome",
+  "event.outcomes.hint": "Each candidate is its own YES/NO market. Pick one to drive the price and trade.",
   "event.fallbackQuestion": "Polymarket event {id}",
   "event.fallbackDesc":
     "Live market data unavailable — running in offline preview mode. The x402 + AI flow remains fully functional.",
@@ -282,6 +287,8 @@ export const zh: Record<DictKey, string> = {
   "markets.loading": "加载中",
   "markets.empty": "当前没有可用的市场数据，Polymarket 可能正在冷却，稍后重试。",
   "markets.emptyCategory": "当前「{category}」板块没有热门市场，换个标签或稍后再来。",
+  "markets.loadingMore": "加载更多中…",
+  "markets.noMore": "已经到底啦",
   "markets.cat.All": "全部",
   "markets.cat.Politics": "政治",
   "markets.cat.Crypto": "加密",
@@ -295,6 +302,7 @@ export const zh: Record<DictKey, string> = {
   "card.volume24h": "24h 量 {value}",
   "card.daysLeft": "{n}天",
   "card.aiInsight": "AI 洞察",
+  "card.moreOutcomes": "还有 {n} 个",
 
   // event detail
   "event.back": "返回市场",
@@ -305,6 +313,8 @@ export const zh: Record<DictKey, string> = {
   "event.unlockTitle": "解锁 AI 洞察",
   "event.unlockDesc": "每个事件单次付费，流式 AI 报告 + 多源证据汇总。",
   "event.tradeTitle": "交易",
+  "event.outcomes.title": "选择候选",
+  "event.outcomes.hint": "每个候选都是独立的 YES/NO 市场，选中后会驱动上方价格和下方下单。",
   "event.fallbackQuestion": "Polymarket 事件 {id}",
   "event.fallbackDesc":
     "暂时无法获取实时市场数据，已切换到离线预览模式。x402 + AI 流程仍然可用。",

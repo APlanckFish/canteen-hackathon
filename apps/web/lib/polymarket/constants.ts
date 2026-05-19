@@ -63,7 +63,7 @@ export const NEG_RISK_CTF_EXCHANGE_V1 =
 
 /** V2 NegRisk CTF Exchange (multi-outcome markets) — currently active. */
 export const NEG_RISK_CTF_EXCHANGE =
-  "0xe2222d279d744050d28E00520010520000310F59" as const;
+  "0xe2222d279d744050d28e00520010520000310F59" as const;
 
 /**
  * NegRiskAdapter — required approval target for NegRisk markets (extra

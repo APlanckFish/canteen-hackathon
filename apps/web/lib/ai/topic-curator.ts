@@ -1,79 +1,134 @@
 import type { MarketSummary } from "@canteen/shared/insight";
-import { fetchHotMarkets } from "@/lib/polymarket/gamma";
+import { fetchEventsByTag } from "@/lib/polymarket/gamma";
 import { getKv, KV_KEYS } from "@/lib/kv";
 import { getServerEnv } from "@/lib/env";
 
 /**
- * Topic curator: pull hot markets from Polymarket Gamma, score each one with
- * a hybrid (volume + AI) signal, then pin the top N as "AI Picked" picks.
+ * Topic curator: two public entry points.
  *
- * Scoring formula:
+ *   getAiPicks()          — returns the top-N AI-curated markets, blending
+ *                            volume + DeepSeek scoring. Cached 1h in KV.
+ *   getCategoryPage()     — returns one page of events filtered by Polymarket
+ *                            tag (crypto / sports / politics / pop-culture).
+ *                            Page 0 cached 60s; subsequent pages uncached.
  *
- *     finalScore = 0.7 * volumeScore + 0.3 * aiScore
- *
- *   - volumeScore (0–100): log10(volume24h) normalized; deterministic, always
- *     available.
- *   - aiScore    (0–100): DeepSeek rates each candidate on three axes
- *     (topicality / contention / researchability) and we average them. If
- *     DeepSeek is unavailable or errors, this collapses to 50 (neutral) so
- *     the volume signal alone decides ranking.
- *
- * Caching: full result (picks + all) is cached in KV for HOT_TTL seconds.
- * Set to 1 hour — AI rankings rarely shift within an hour, and this keeps
- * the DeepSeek bill negligible (~24 calls/day across all visitors).
+ * The legacy getCuratedMarkets() preserves backwards compatibility for the
+ * RSC home page: it returns picks + a default "all" listing (no filter).
  */
 
-const HOT_TTL = 60 * 60; // 1 hour
-const AI_CANDIDATE_COUNT = 30; // DeepSeek scores at most this many markets
+const PICKS_TTL = 60 * 60; // 1 h — AI scoring is the expensive part
+const CAT_PAGE0_TTL = 60;  // 60 s — first page warmup cache
+const AI_CANDIDATE_COUNT = 30;
 const PICK_COUNT = 5;
+const PAGE_SIZE = 20;
+
+// ────────────────────────────────────────────────────────────────────────────
+// Public: AI picks (curated rail)
+// ────────────────────────────────────────────────────────────────────────────
+
+export async function getAiPicks(): Promise<MarketSummary[]> {
+  const kv = getKv();
+  const cached = await kv.get<string>(KV_KEYS.marketsHot());
+  if (cached) {
+    try {
+      return JSON.parse(cached) as MarketSummary[];
+    } catch {
+      // fall through and refresh
+    }
+  }
+
+  // AI picks use the SAME data source as the rest of the grid (events
+  // endpoint) so the front-end can dedupe by event id cleanly. We pull a
+  // larger candidate pool here to give DeepSeek more variety to score.
+  const candidates = await fetchEventsByTag({ limit: AI_CANDIDATE_COUNT });
+  const aiScores = await scoreWithAi(candidates).catch((e) => {
+    console.warn(`[curator] AI scoring failed, falling back: ${(e as Error).message}`);
+    return new Map<string, number>();
+  });
+  const picks = rankAndTag(candidates, aiScores, PICK_COUNT);
+
+  await kv.set(KV_KEYS.marketsHot(), JSON.stringify(picks), {
+    ex: PICKS_TTL,
+  });
+  return picks;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Public: category page (paginated)
+// ────────────────────────────────────────────────────────────────────────────
+
+export async function getCategoryPage(opts: {
+  /** Polymarket tag slug; undefined = "All" (no tag filter). */
+  slug?: string;
+  /** 0-indexed page number. */
+  page?: number;
+}): Promise<{ items: MarketSummary[]; nextPage: number | null }> {
+  const page = opts.page ?? 0;
+  const offset = page * PAGE_SIZE;
+
+  // Cache only the first page (most users never scroll, so it's the hot path).
+  const cacheable = page === 0;
+  const kv = getKv();
+  const cacheKey = KV_KEYS.marketsCat(opts.slug ?? "all", offset);
+
+  if (cacheable) {
+    const cached = await kv.get<string>(cacheKey);
+    if (cached) {
+      try {
+        const items = JSON.parse(cached) as MarketSummary[];
+        return {
+          items,
+          nextPage: items.length === PAGE_SIZE ? page + 1 : null,
+        };
+      } catch {
+        // fall through and refresh
+      }
+    }
+  }
+
+  const items = await fetchEventsByTag({
+    slug: opts.slug,
+    offset,
+    limit: PAGE_SIZE,
+  });
+
+  if (cacheable && items.length > 0) {
+    await kv.set(cacheKey, JSON.stringify(items), { ex: CAT_PAGE0_TTL });
+  }
+
+  return {
+    items,
+    // If we got a full page back, assume there might be another.
+    nextPage: items.length === PAGE_SIZE ? page + 1 : null,
+  };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Public: combined (RSC initial payload for "All" tab)
+// ────────────────────────────────────────────────────────────────────────────
 
 export async function getCuratedMarkets(): Promise<{
   picks: MarketSummary[];
   all: MarketSummary[];
   cached: boolean;
 }> {
-  const kv = getKv();
-  const cachedRaw = await kv.get<string>(KV_KEYS.marketsHot());
-  if (cachedRaw) {
-    try {
-      const parsed = JSON.parse(cachedRaw) as {
-        picks: MarketSummary[];
-        all: MarketSummary[];
-      };
-      return { ...parsed, cached: true };
-    } catch {
-      // fall through and refresh
-    }
-  }
-
-  const all = await fetchHotMarkets(36);
-
-  // Score the top AI_CANDIDATE_COUNT (already volume-sorted from Gamma).
-  const candidates = [...all].slice(0, AI_CANDIDATE_COUNT);
-  const aiScores = await scoreWithAi(candidates).catch((e) => {
-    // Defensive: any AI failure → neutral 50 for everyone, volume decides.
-    console.warn(`[curator] AI scoring failed, falling back: ${(e as Error).message}`);
-    return new Map<string, number>();
-  });
-
-  const picks = pickTopByHybridScore(candidates, aiScores, PICK_COUNT);
-
-  await kv.set(
-    KV_KEYS.marketsHot(),
-    JSON.stringify({ picks, all }),
-    { ex: HOT_TTL },
-  );
-  return { picks, all, cached: false };
+  // Two trips, in parallel: AI picks (cached 1h) + first-page "All" feed.
+  const [picks, firstPage] = await Promise.all([
+    getAiPicks(),
+    getCategoryPage({ page: 0 }),
+  ]);
+  return { picks, all: firstPage.items, cached: false };
 }
 
-/** Map markets → final hotness using volume + AI score. */
-function pickTopByHybridScore(
+// ────────────────────────────────────────────────────────────────────────────
+// Internal: scoring + tagging
+// ────────────────────────────────────────────────────────────────────────────
+
+function rankAndTag(
   markets: MarketSummary[],
   aiScores: Map<string, number>,
   count: number,
 ): MarketSummary[] {
-  // Volume score: log10 normalized to 0..100. Highest volume in the candidate
-  // set maps to 100; bottom-tier markets land near 30–50.
   const maxLog = Math.max(
     1,
     ...markets.map((m) => Math.log10(Math.max(1, m.volume24h))),
@@ -81,7 +136,7 @@ function pickTopByHybridScore(
 
   const scored = markets.map((m) => {
     const vScore = (Math.log10(Math.max(1, m.volume24h)) / maxLog) * 100;
-    const aScore = aiScores.get(m.id) ?? 50; // neutral fallback
+    const aScore = aiScores.get(m.id) ?? 50;
     const hotness = Math.round(0.7 * vScore + 0.3 * aScore);
     return {
       ...m,
@@ -101,15 +156,11 @@ function hotnessToTag(hotness: number, m: MarketSummary, hasAi: boolean): string
   return hasAi ? "AI Pick" : "Volume Pick";
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// DeepSeek scoring
-// ────────────────────────────────────────────────────────────────────────────
-
 interface AiScoreEntry {
   id: string;
-  topicality: number;     // 0–100, how broadly newsworthy this is
-  contention: number;     // 0–100, how unresolved the market thinks it is
-  researchability: number; // 0–100, how much TikHub-style evidence likely exists
+  topicality: number;
+  contention: number;
+  researchability: number;
 }
 
 const SYSTEM_PROMPT = `You are a market curator for a prediction-market research dApp. Given a JSON list of Polymarket markets, you score each one on three axes (0-100 each):
@@ -160,9 +211,7 @@ async function scoreWithAi(
         ],
       }),
     });
-    if (!res.ok) {
-      throw new Error(`DeepSeek ${res.status}`);
-    }
+    if (!res.ok) throw new Error(`DeepSeek ${res.status}`);
     const json = (await res.json()) as {
       choices?: { message?: { content?: string } }[];
     };
@@ -184,11 +233,6 @@ async function scoreWithAi(
   return result;
 }
 
-/**
- * DeepSeek with `response_format: json_object` returns ONE top-level JSON
- * object. The model usually wraps the array under a key like `markets` or
- * `scores`. We try both shapes plus raw-array fallback.
- */
 function parseScoreArray(content: string): AiScoreEntry[] {
   let raw: unknown;
   try {

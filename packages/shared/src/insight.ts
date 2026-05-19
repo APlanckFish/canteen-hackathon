@@ -117,4 +117,26 @@ export interface MarketSummary {
   minOrderSize?: number;
   /** Whether market uses NegRisk (multi-outcome) — affects Exchange contract addr. */
   negRisk?: boolean;
+  /**
+   * For multi-outcome (negRisk) events, the candidate inner markets ranked
+   * by YES probability. Each entry carries its own CLOB token ids so the
+   * user can place a real trade on whichever candidate they pick.
+   *
+   * Empty / undefined for plain binary YES/NO markets — the UI falls back
+   * to the standard YES%/NO% layout in that case.
+   */
+  outcomes?: {
+    /** Inner market id (used as a stable key + for `fetchMarketById`). */
+    id: string;
+    /** Stripped candidate name, e.g. "Colorado Avalanche". */
+    label: string;
+    /** Full inner-market question, e.g. "Will the Colorado Avalanche win…?". */
+    question: string;
+    prob: number;
+    /** Per-candidate trade params (each candidate is its own YES/NO pair). */
+    clobTokenIds?: { yes: string; no: string };
+    tickSize?: number;
+    minOrderSize?: number;
+    negRisk?: boolean;
+  }[];
 }

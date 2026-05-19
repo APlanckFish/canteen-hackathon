@@ -102,5 +102,9 @@ export const KV_KEYS = {
     `x402:challenge:${eventId}:${nonce}`,
   consumed: (txHash: string) => `x402:consumed:${txHash.toLowerCase()}`,
   ledger: (txHash: string) => `ledger:${txHash.toLowerCase()}`,
-  marketsHot: () => `markets:hot:v1`,
+  /** AI-picked carousel (top-N curated markets). Cached for 1h. */
+  marketsHot: () => `markets:hot:v2`,
+  /** Category-filtered events first page. Cached for 60s. Higher pages are uncached. */
+  marketsCat: (slug: string, offset: number) =>
+    `markets:cat:v2:${slug}:${offset}`,
 } as const;

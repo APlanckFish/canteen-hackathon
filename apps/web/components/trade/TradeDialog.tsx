@@ -881,7 +881,7 @@ export function TradeDialog({ open, onClose, market, verdict }: Props) {
               {t("td.done.orderId", { id: shortHash(orderId, 8, 6) })}
             </div>
             <a
-              href={`https://polymarket.com/market/${market.slug}`}
+              href={`https://polymarket.com/event/${market.slug}`}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-accent hover:underline"

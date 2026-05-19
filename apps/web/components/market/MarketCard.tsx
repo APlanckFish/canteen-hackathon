@@ -7,10 +7,22 @@ import { ProbabilityBar } from "./ProbabilityBar";
 import { Flame, ArrowUpRight, Clock } from "lucide-react";
 import { useT } from "@/lib/i18n/provider";
 
-export function MarketCard({ market, featured = false }: { market: MarketSummary; featured?: boolean }) {
+const TOP_OUTCOMES_VISIBLE = 3;
+
+export function MarketCard({
+  market,
+  featured = false,
+}: {
+  market: MarketSummary;
+  featured?: boolean;
+}) {
   const ends = market.endDate ? new Date(market.endDate) : null;
-  const days = ends ? Math.max(0, Math.round((ends.getTime() - Date.now()) / 86400000)) : null;
+  const days = ends
+    ? Math.max(0, Math.round((ends.getTime() - Date.now()) / 86400000))
+    : null;
   const { t } = useT();
+
+  const isMulti = (market.outcomes?.length ?? 0) > 1;
 
   return (
     <Link
@@ -44,20 +56,19 @@ export function MarketCard({ market, featured = false }: { market: MarketSummary
             {market.question}
           </h3>
           {market.aiTag ? (
-            <span className="mt-1 inline-block pill-accent text-[10px]">{market.aiTag}</span>
+            <span className="mt-1 inline-block pill-accent text-[10px]">
+              {market.aiTag}
+            </span>
           ) : null}
         </div>
       </div>
 
-      <div className="flex items-center justify-between text-xs">
-        <span className="font-medium text-yes">
-          {t("card.yes", { pct: `${Math.round(market.yesProb * 100)}%` })}
-        </span>
-        <span className="font-medium text-no">
-          {t("card.no", { pct: `${Math.round((1 - market.yesProb) * 100)}%` })}
-        </span>
-      </div>
-      <ProbabilityBar yesProb={market.yesProb} size="sm" />
+      {/* ── Outcomes ─────────────────────────────────────────────────── */}
+      {isMulti ? (
+        <MultiOutcomeList outcomes={market.outcomes!} />
+      ) : (
+        <BinaryOutcome yesProb={market.yesProb} />
+      )}
 
       <div className="flex items-center justify-between text-[11px] text-foreground-dim">
         <span>
@@ -82,5 +93,63 @@ export function MarketCard({ market, featured = false }: { market: MarketSummary
         </span>
       </div>
     </Link>
+  );
+}
+
+/** Plain YES/NO binary view — used for 1-market events. */
+function BinaryOutcome({ yesProb }: { yesProb: number }) {
+  const { t } = useT();
+  return (
+    <>
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-medium text-yes">
+          {t("card.yes", { pct: `${Math.round(yesProb * 100)}%` })}
+        </span>
+        <span className="font-medium text-no">
+          {t("card.no", { pct: `${Math.round((1 - yesProb) * 100)}%` })}
+        </span>
+      </div>
+      <ProbabilityBar yesProb={yesProb} size="sm" />
+    </>
+  );
+}
+
+/** Top-K candidate list — used for multi-outcome (negRisk) events. */
+function MultiOutcomeList({
+  outcomes,
+}: {
+  outcomes: NonNullable<MarketSummary["outcomes"]>;
+}) {
+  const { t } = useT();
+  const visible = outcomes.slice(0, TOP_OUTCOMES_VISIBLE);
+  const hidden = outcomes.length - visible.length;
+
+  return (
+    <ul className="space-y-1.5">
+      {visible.map((o, i) => {
+        const pct = Math.round(o.prob * 100);
+        return (
+          <li key={i} className="space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="truncate text-foreground-muted">{o.label}</span>
+              <span className="font-medium text-yes ml-2 tabular-nums">
+                {pct}%
+              </span>
+            </div>
+            <div className="relative h-1 w-full overflow-hidden rounded-full bg-white/5">
+              <div
+                className="absolute inset-y-0 left-0 bg-gradient-to-r from-accent to-yes"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </li>
+        );
+      })}
+      {hidden > 0 ? (
+        <li className="pt-0.5 text-[10px] text-foreground-dim">
+          {t("card.moreOutcomes", { n: hidden })}
+        </li>
+      ) : null}
+    </ul>
   );
 }

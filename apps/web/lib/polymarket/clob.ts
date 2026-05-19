@@ -16,10 +16,12 @@ export function buildPolymarketDeepLink(
   side: TradeSide,
 ): string {
   const slug = market.slug ?? market.id;
-  // Use /market/<slug> rather than /event/<slug> — Polymarket 307s
-  // /market URLs to the canonical /event/<eventSlug>/<marketSlug> path,
-  // whereas /event/<marketSlug> directly returns 404 for many markets.
-  return `https://polymarket.com/market/${encodeURIComponent(slug)}?outcome=${
+  // We sourced this slug from the Gamma `/events` endpoint, so it's an
+  // EVENT slug (e.g. "2026-nhl-stanley-cup-champion"). polymarket.com
+  // serves event slugs at /event/<slug>; the /market/<slug> path is
+  // reserved for inner-market slugs ("will-the-...") which 307 → 404
+  // when fed an event slug.
+  return `https://polymarket.com/event/${encodeURIComponent(slug)}?outcome=${
     side === "YES" ? "Yes" : "No"
   }`;
 }
