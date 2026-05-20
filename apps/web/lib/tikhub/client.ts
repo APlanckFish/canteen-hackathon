@@ -172,28 +172,71 @@ function parseTwitter(raw: unknown, limit: number): EvidenceItem[] {
   for (const row of list.slice(0, limit)) {
     if (!row || typeof row !== "object") continue;
     const t = row as Record<string, unknown>;
-    const user = (t.user ?? t.author ?? {}) as Record<string, unknown>;
-    const pm = (t.public_metrics ?? t.metrics ?? t.legacy ?? {}) as Record<string, unknown>;
-    const id = String(t.id_str ?? t.tweet_id ?? t.id ?? cryptoId());
-    const screen = strField(user, ["screen_name", "username", "uniqueId"]);
-    const text = strField(t, ["text", "full_text", "content"]) ?? "";
+    // TikHub's `fetch_search_timeline` flattens user info under `user_info`,
+    // and exposes screen_name + tweet_id at the top level. The legacy
+    // `user` / `legacy` / `public_metrics` shapes only show up on other
+    // Twitter endpoints, so we still fall back to them defensively.
+    const userInfo = (t.user_info ?? t.user ?? t.author ?? {}) as Record<
+      string,
+      unknown
+    >;
+    const legacy = (t.legacy ?? {}) as Record<string, unknown>;
+    const pm = (t.public_metrics ?? t.metrics ?? legacy ?? {}) as Record<
+      string,
+      unknown
+    >;
+    const id = String(
+      t.tweet_id ?? t.id_str ?? legacy.id_str ?? t.rest_id ?? t.id ?? cryptoId(),
+    );
+    // screen_name is at the TOP level on the search timeline endpoint;
+    // also try user_info / user nested fields for other endpoints.
+    const screen =
+      strField(t, ["screen_name"]) ??
+      strField(userInfo, ["screen_name", "username", "uniqueId"]);
+    const text =
+      strField(t, ["text", "full_text", "content"]) ??
+      strField(legacy, ["full_text", "text"]) ??
+      "";
     out.push({
       source: "twitter",
       id,
       title: truncate(text, 240) || `Tweet ${id}`,
       excerpt: truncate(text, 600),
       url: screen ? `https://x.com/${screen}/status/${id}` : undefined,
-      author: strField(user, ["name", "screen_name"]) ?? screen ?? undefined,
+      author:
+        strField(userInfo, ["name", "screen_name"]) ?? screen ?? undefined,
       metrics: {
-        views: numField(pm, ["impression_count", "view_count", "views"]),
-        likes: numField(pm, ["like_count", "favorite_count"]),
-        comments: numField(pm, ["reply_count", "comment_count"]),
-        shares: numField(pm, ["retweet_count", "share_count"]),
+        // TikHub uses `views` (string!) / `favorites` / `replies` /
+        // `retweets` at the top level; v1.1 / v2 endpoints sometimes use
+        // public_metrics shape.
+        views: numField(t, ["views"]) ?? numField(pm, ["impression_count", "view_count", "views"]),
+        likes:
+          numField(t, ["favorites"]) ??
+          numField(pm, ["like_count", "favorite_count", "favorites"]),
+        comments:
+          numField(t, ["replies"]) ??
+          numField(pm, ["reply_count", "comment_count", "replies"]),
+        shares:
+          numField(t, ["retweets"]) ??
+          numField(pm, ["retweet_count", "share_count", "retweets"]),
       },
-      publishedAt: numField(t, ["created_at_ts", "create_time", "timestamp"]),
+      publishedAt:
+        parseTwitterDate(strField(t, ["created_at"])) ??
+        numField(t, ["created_at_ts", "create_time", "timestamp"]),
     });
   }
   return out;
+}
+
+/**
+ * Parse Twitter's classic `created_at` string ("Sat Apr 25 19:11:42 +0000 2026")
+ * into a unix-seconds timestamp. Returns undefined for malformed input so
+ * upstream fall-throughs (numeric fields) can still kick in.
+ */
+function parseTwitterDate(s?: string): number | undefined {
+  if (!s) return undefined;
+  const ms = Date.parse(s);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : undefined;
 }
 
 function parseYoutube(raw: unknown, limit: number): EvidenceItem[] {
