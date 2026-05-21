@@ -11,6 +11,8 @@
 
 **Production**: https://canteen-hackthon.vercel.app
 
+**Live Video Demo**: https://www.loom.com/share/128d01e85cdf490f9829f1fdc2e60403
+
 **Pre-flight (about 3 minutes)**:
 
 1. Connect a wallet (MetaMask or any WalletConnect-compatible wallet).

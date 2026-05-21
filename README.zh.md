@@ -11,6 +11,8 @@
 
 **Production**: https://canteen-hackthon.vercel.app
 
+**演示视屏**: https://www.loom.com/share/128d01e85cdf490f9829f1fdc2e60403
+
 **前置准备**（约 3 分钟）：
 
 1. 连接钱包（MetaMask 或 WalletConnect 兼容钱包）
