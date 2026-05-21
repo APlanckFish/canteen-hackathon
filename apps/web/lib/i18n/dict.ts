@@ -238,7 +238,7 @@ export const en = {
     "Grab free USDC from Circle's official testnet faucet — pick \"Arc Sepolia\" and paste your wallet address.",
   "about.faucet.cta": "Open Circle Faucet",
   "about.faucet.note":
-    "Up to 10 USDC per request. You also need a tiny bit of native gas — request that on the same page.",
+    "Up to 10 USDC per request. On Arc the same USDC also pays for gas — no separate gas token needed.",
 
   // ---- demo mode badge ----
   "demo.badge": "DEMO MODE",
@@ -478,7 +478,7 @@ export const zh: Record<DictKey, string> = {
     "通过 Circle 官方测试网水龙头免费领取 USDC——选择 \"Arc Sepolia\" 并粘贴你的钱包地址即可。",
   "about.faucet.cta": "打开 Circle 水龙头",
   "about.faucet.note":
-    "每次最多 10 USDC，同一页面还能领取一点原生 gas。",
+    "每次最多 10 USDC。Arc 链上同一份 USDC 也是 gas，无需额外领取 native token。",
 
   // demo badge
   "demo.badge": "演示模式",

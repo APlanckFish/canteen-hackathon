@@ -30,7 +30,7 @@ const PublicEnvSchema = z.object({
   ),
   NEXT_PUBLIC_PAYMENT_VAULT_ADDRESS: optionalAddress,
   NEXT_PUBLIC_USDC_ARC_ADDRESS: optionalAddress,
-  NEXT_PUBLIC_INSIGHT_PRICE_USDC: z.preprocess(emptyToUndef, z.coerce.number().positive().default(0.5)),
+  NEXT_PUBLIC_INSIGHT_PRICE_USDC: z.preprocess(emptyToUndef, z.coerce.number().positive().default(0.01)),
   NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: z.preprocess(emptyToUndef, z.string().optional().default("")),
 });
 

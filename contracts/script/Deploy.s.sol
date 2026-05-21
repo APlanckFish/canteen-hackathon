@@ -10,13 +10,13 @@ import {PaymentVault} from "../src/PaymentVault.sol";
  * Required env vars:
  *   - DEPLOYER_PRIVATE_KEY  (hex, with 0x)
  *   - USDC_ARC_ADDRESS      (USDC ERC20 on the target chain)
- *   - MIN_PRICE_USDC        (decimal string e.g. "0.5")
+ *   - MIN_PRICE_USDC        (decimal string e.g. "0.01")
  */
 contract Deploy is Script {
     function run() external returns (PaymentVault vault) {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address usdc = vm.envAddress("USDC_ARC_ADDRESS");
-        // assume USDC has 6 decimals; converts e.g. "0.5" → 500_000
+        // assume USDC has 6 decimals; converts e.g. "0.01" → 10_000
         uint256 minPrice = _parseUsdc(vm.envString("MIN_PRICE_USDC"));
         address deployer = vm.addr(pk);
 

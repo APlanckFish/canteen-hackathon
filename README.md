@@ -19,15 +19,15 @@
 2. Sign in once on [polymarket.com](https://polymarket.com) with the **same wallet** so a funding wallet gets provisioned.
 3. Deposit at least $1 pUSD on polymarket.com (the first deposit auto-configures on-chain approvals).
 4. Top up the wallet with:
-   - **Arc Testnet**: ≥ 1 USDC + a sliver of native gas (to unlock AI reports)
-   - **Polygon**: ≥ 0.05 POL (gas only)
-5. In our app: pick any market → `Unlock AI Insight · 0.5 USDC` → read the AI report → `Trade YES / NO` → done.
+   - **Arc Testnet**: a few cents of USDC — that's _both_ the unlock fee and the native gas (Arc settles gas in USDC directly, no separate gas token). 0.10 USDC is plenty for many unlocks.
+   - **Polygon**: ≥ 0.05 POL (gas only) + at least $1 pUSD on polymarket.com to place a real order.
+5. In our app: pick any market → `Unlock AI Insight · 0.01 USDC` → read the AI report → `Trade YES / NO` → done.
 
 ---
 
 ## ✨ Highlights
 
-- 🔐 **x402 on-chain payment** — 0.5 USDC unlock, verified by the `Paid` log on-chain plus KV double-replay protection.
+- 🔐 **x402 on-chain payment** — 0.01 USDC unlock on Arc (USDC also doubles as native gas), verified by the `Paid` log on-chain plus KV double-replay protection.
 - 🤖 **Two-agent AI orchestration** — Topic Curator selects the hottest markets, Deep Analyzer streams a research report with calibrated YES probability, confidence and suggested size.
 - 📰 **TikHub multi-source intelligence** — TikTok + X + YouTube + Google News fetched in parallel; any single feed failing doesn't break the bundle.
 - 💱 **Polymarket V2 zero-friction trading** — automatic wallet-kind detection (EOA / Safe / Proxy / Deposit), automatic API-key derivation, $1-min FAK market buy. **Users never have to paste an API key.**
@@ -183,7 +183,7 @@ Full list in [`.env.example`](./.env.example). Key entries:
 | `NEXT_PUBLIC_ARC_CHAIN_ID` / `_ARC_RPC_URL` | Arc Testnet config (x402 settlement) |
 | `NEXT_PUBLIC_PAYMENT_VAULT_ADDRESS` | Deployed `PaymentVault` address |
 | `NEXT_PUBLIC_USDC_ARC_ADDRESS` | USDC ERC20 on Arc Testnet |
-| `NEXT_PUBLIC_INSIGHT_PRICE_USDC` | Per-event unlock price (default 0.5) |
+| `NEXT_PUBLIC_INSIGHT_PRICE_USDC` | Per-event unlock price (production default: `0.01`) |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | RainbowKit / WalletConnect |
 | `NEXT_PUBLIC_POLYGON_RPC_URL` | Polygon RPC (use your own Alchemy/Quicknode in prod) |
 | `DEEPSEEK_API_KEY` / `_BASE_URL` / `_MODEL` | DeepSeek streaming chat |
@@ -197,7 +197,7 @@ Full list in [`.env.example`](./.env.example). Key entries:
 
 1. **Home page · AI Picked rail.** Live Polymarket markets, sorted by AI hotness, refreshed every minute.
 2. **Open an event.** YES/NO duo-color hero, volume / liquidity / category — all from Polymarket Gamma.
-3. **Click `Unlock AI Insight · 0.5 USDC`.**
+3. **Click `Unlock AI Insight · 0.01 USDC`.**
    - Wallet pops twice: `approve` USDC → `PaymentVault.pay()`.
    - Server replies 402 → verifies the on-chain `Paid` log → opens SSE.
    - The right rail fills with TikHub evidence cards while the left rail streams the markdown report.

@@ -19,15 +19,15 @@
 2. 在 [polymarket.com](https://polymarket.com) 用同一个钱包登录注册一次（拿到 funding wallet）
 3. 在 polymarket.com 充值至少 $1 pUSD（首次充值会自动配置 on-chain approvals）
 4. 钱包里准备：
-   - **Arc Testnet**: ≥ 1 USDC + 少量原生 gas（解锁 AI 报告）
-   - **Polygon**: ≥ 0.05 POL（gas）
-5. 在我们的 App 里随便点一个市场 → `Unlock AI Insight · 0.5 USDC` → 看 AI 报告 → `Trade YES / NO` → 完成下单
+   - **Arc Testnet**：少量 USDC 即可 — 这条链的原生 gas **就是 USDC**（不需要单独的 gas token）。0.10 USDC 够用很多次解锁。
+   - **Polygon**：≥ 0.05 POL（gas）+ 在 polymarket.com 充至少 $1 pUSD（用于真实下单）。
+5. 在我们的 App 里随便点一个市场 → `Unlock AI Insight · 0.01 USDC` → 看 AI 报告 → `Trade YES / NO` → 完成下单
 
 ---
 
 ## ✨ 核心特性
 
-- 🔐 **x402 链上支付** — 0.5 USDC 解锁，链上 `Paid` 事件验证 + KV 双重防重放。
+- 🔐 **x402 链上支付** — 在 Arc 上 0.01 USDC 解锁（Arc 链的原生 gas 也是 USDC，无需第二种 token），链上 `Paid` 事件验证 + KV 双重防重放。
 - 🤖 **双 Agent AI 分析** — Topic Curator 选热门市场，Deep Analyzer 写研究报告 + 给出 YES 概率/置信度/建议下注金额。
 - 📰 **TikHub 多源情报** — TikTok + X + YouTube + Google News 并发抓取，任何一路挂掉不影响整体。
 - 💱 **Polymarket V2 无感下单** — 自动探测钱包类型（EOA/Safe/Proxy/Deposit）、自动派 API key、$1 起的 FAK 市价单，用户**全程不用复制粘贴 API key**。
@@ -183,7 +183,7 @@ vercel deploy --prod
 | `NEXT_PUBLIC_ARC_CHAIN_ID` / `_ARC_RPC_URL` | Arc Testnet 配置（x402 结算） |
 | `NEXT_PUBLIC_PAYMENT_VAULT_ADDRESS` | 已部署的 `PaymentVault` 地址 |
 | `NEXT_PUBLIC_USDC_ARC_ADDRESS` | Arc Testnet 上的 USDC ERC20 地址 |
-| `NEXT_PUBLIC_INSIGHT_PRICE_USDC` | 单次解锁价格（默认 0.5） |
+| `NEXT_PUBLIC_INSIGHT_PRICE_USDC` | 单次解锁价格（线上默认：`0.01`） |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | RainbowKit / WalletConnect 项目 ID |
 | `NEXT_PUBLIC_POLYGON_RPC_URL` | Polygon RPC（建议自备 Alchemy/Quicknode endpoint） |
 | `DEEPSEEK_API_KEY` / `_BASE_URL` / `_MODEL` | DeepSeek 流式对话 |
@@ -197,7 +197,7 @@ vercel deploy --prod
 
 1. **首页 AI Picked 列表** — Polymarket 实时市场，按 AI 热度排序，每分钟刷新。
 2. **进入事件详情** — YES / NO 双色 hero、volume / liquidity / category。
-3. **点击 `Unlock AI Insight · 0.5 USDC`** —
+3. **点击 `Unlock AI Insight · 0.01 USDC`** —
    - 钱包弹两次：`approve` USDC → `PaymentVault.pay()`
    - 服务端先返 402 → 验证链上 `Paid` log → 开 SSE 流
    - 右侧 evidence panel 实时填入 TikHub 多源 feeds，左侧 markdown 报告流式输出。
